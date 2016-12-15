@@ -1,17 +1,22 @@
 pub enum CoroutineResult<Y, R> {
-    Await,
+    Awaiting,
     Yield(Y),
     Return(R),
     Completed,
 }
 
-pub trait WaitFor<Object> {
-    type Return;
-    fn wait_for(self, obj: &mut Object) -> Option<Self::Return>;
+pub enum Async<T> {
+    Ready(T),
+    NotReady,
 }
 
-pub trait Coroutine<Arg> {
+pub trait WaitFor<Object> {
+    type Return;
+    fn wait_for(self, obj: &mut Object) -> Async<Self::Return>;
+}
+
+pub trait Coroutine<Executor> {
     type Yield;
     type Return;
-	fn resume(&mut self, arg: Arg) -> CoroutineResult<Self::Yield, Self::Return>;
+	fn resume(&mut self, executor: Executor) -> CoroutineResult<Self::Yield, Self::Return>;
 }

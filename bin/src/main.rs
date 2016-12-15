@@ -2,8 +2,6 @@
 #![feature(core_intrinsics)]
 #![feature(never_type)]
 
-use std::marker::PhantomData;
-
 extern crate future;
 extern crate coroutine;
 
@@ -20,7 +18,7 @@ struct FutureTest<H>(H);
 impl<H> Coroutine<H> for FutureTest<H> {
 	type Yield = !;
 	type Return = Result<usize, ()>;
-	fn resume(&mut self, arg: H) -> CoroutineResult<Self::Yield, Self::Return> {
+	fn resume(&mut self, executor: H) -> CoroutineResult<Self::Yield, Self::Return> {
 		CoroutineResult::Completed
 	}
 }
@@ -36,7 +34,7 @@ struct IteratorTest;
 impl Coroutine<()> for IteratorTest {
 	type Yield = usize;
 	type Return = ();
-	fn resume(&mut self, arg: ()) -> CoroutineResult<Self::Yield, Self::Return> {
+	fn resume(&mut self, executor: ()) -> CoroutineResult<Self::Yield, Self::Return> {
 		CoroutineResult::Completed
 	}
 }
