@@ -56,11 +56,11 @@ pub trait Future2 {
     fn poll(&mut self, task: &mut Handle2) -> Option<Self::Result>;
 }
 
-impl<'a, T: Coroutine<&'a mut Handle2, Yield = !>> Future2 for T
+impl<R, T: for<'a> Coroutine<&'a mut Handle2, Yield = !, Return = R>> Future2 for T
 {
-    type Result = T::Return;
+    type Result = R;
 
-    fn poll(&mut self, task: &'a mut Handle2) -> Option<Self::Result> {
+    fn poll(&mut self, task: &mut Handle2) -> Option<Self::Result> {
         self.resume(task);
         None
     }
