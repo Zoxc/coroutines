@@ -1,0 +1,8 @@
+[package]
+name = "trait-bin"
+version = "0.1.0"
+authors = ["John Kåre Alsaker <john.kare.alsaker@gmail.com>"]
+
+[dependencies]
+future = { path = "../future" }
+coroutine = { path = "../coroutine" }
