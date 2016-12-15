@@ -15,6 +15,3 @@ pub trait Coroutine<Arg> {
     type Return;
 	fn resume(&mut self, arg: Arg) -> CoroutineResult<Self::Yield, Self::Return>;
 }
-
-// In await!() An coroutine's must be equal to all the awaits's Awaitable::Arg
-// Now how do we implement Awaitable for all futures?

@@ -32,7 +32,11 @@ impl<T: Coroutine<Handle, Return = Result<R, E>, Yield = !>, R, E> Future for T 
     type Error = E;
 
     fn poll(&mut self, handle: Handle) -> Poll<Self::Item, Self::Error> {
-        Ok(Async::NotReady)
+        match self.resume(task) {
+            CoroutineResult::Await => Ok(Async::NotReady),
+            CoroutineResult::Return(r) => r.map(|v| Async::Ready(v)),
+            CoroutineResult::Yield(..) | CoroutineResult::Completed => unreachable!(),
+        }
     }
 }
 
@@ -61,8 +65,11 @@ impl<R, T: for<'a> Coroutine<&'a mut Handle2, Yield = !, Return = R>> Future2 fo
     type Result = R;
 
     fn poll(&mut self, task: &mut Handle2) -> Option<Self::Result> {
-        self.resume(task);
-        None
+        match self.resume(task) {
+            CoroutineResult::Await => None,
+            CoroutineResult::Return(r) => r,
+            CoroutineResult::Yield(..) | CoroutineResult::Completed => unreachable!(),
+        }
     }
 }
 
@@ -83,6 +90,11 @@ impl<T: Coroutine<(), Return = ()>> Iterator for T {
     type Item = T::Yield;
 
     fn next(&mut self) -> Option<Self::Item> {
-        None
+        match self.resume(task) {
+            CoroutineResult::Return(..) |
+            CoroutineResult::Await |
+            CoroutineResult::Completed => None,
+            CoroutineResult::Yield(v) => Some(v),
+        }
     }
 }
