@@ -8,25 +8,18 @@ extern crate coroutine;
 use coroutine::*;
 use future::*;
 
-fn type_name<T>(_: &T) -> &'static str where T: ?Sized {
-	unsafe { std::intrinsics::type_name::<T>() }
-}
+struct FutureTest;
 
-
-struct FutureTest<H>(H);
-
-impl<H> Coroutine<H> for FutureTest<H> {
+impl<H> Coroutine<H> for FutureTest {
 	type Yield = !;
-	type Return = Result<usize, ()>;
+	type Return = usize;
 	fn resume(&mut self, executor: H) -> CoroutineResult<Self::Yield, Self::Return> {
 		CoroutineResult::Completed
 	}
 }
 
 fn hm() -> impl Future {
-	let a = unsafe { std::mem::uninitialized() };
-	println!("type of a {}", type_name(&a));
-	FutureTest(a)
+	FutureTest
 }
 
 struct IteratorTest;
