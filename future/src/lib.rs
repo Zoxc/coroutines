@@ -1,3 +1,5 @@
+#![feature(never_type)]
+
 extern crate coroutine;
 
 use coroutine::*;
@@ -25,8 +27,7 @@ pub trait Future {
     fn poll(&mut self, handle: Handle) -> Poll<Self::Item, Self::Error>;
 }
 
-impl<T: Coroutine<Return = Result<R, E>, Yield = (), Arg = Handle>, R, E> Future for T
-{
+impl<T: Coroutine<Handle, Return = Result<R, E>, Yield = !>, R, E> Future for T {
     type Item = R;
     type Error = E;
 
@@ -35,53 +36,50 @@ impl<T: Coroutine<Return = Result<R, E>, Yield = (), Arg = Handle>, R, E> Future
     }
 }
 
-impl<T: Future> Awaitable for T
-{
-    type Arg = Handle;
-    type Return = Poll<T::Item, T::Error>;
+impl<T: Future> WaitFor<T> for Handle {
+    type Return = Result<T::Item, T::Error>;
 
-    fn await(&mut self, arg: Self::Arg) -> Option<Self::Return> {
-        None
+    fn wait_for(self, obj: &mut T) -> Option<Self::Return> {
+        match obj.poll(self) {
+            Ok(Async::NotReady) => None,
+            Ok(Async::Ready(v)) => Some(Ok(v)),
+            Err(e) => Some(Err(e)),
+        }
     }
 }
 
-/*
-struct Task;
+pub struct Handle2;
 
 pub trait Future2 {
     type Result;
 
-    fn poll(&mut self, task: &mut Task) -> Option<Self::Result>;
+    fn poll(&mut self, task: &mut Handle2) -> Option<Self::Result>;
 }
 
-impl<'a, T: Coroutine<Yield = (), Arg = &'a mut Task>> Future2 for T
+impl<'a, T: Coroutine<&'a mut Handle2, Yield = !>> Future2 for T
 {
     type Result = T::Return;
 
-    fn poll(&mut self, task: &mut Task) -> Option<Self::Result> {
+    fn poll(&mut self, task: &'a mut Handle2) -> Option<Self::Result> {
         self.resume(task);
         None
     }
 }
 
-impl<'a, T: Future2<>> Awaitable for T
-{
-    type Arg = &mut Task;
-    type Result = T::Return;
+impl<'h, T: Future2> WaitFor<T> for &'h mut Handle2 {
+    type Return = T::Result;
 
-    fn poll(&mut self, task: &mut Task) -> Option<Self::Result> {
-        self.resume(task);
-        None
+    fn wait_for(self, obj: &mut T) -> Option<Self::Return> {
+        obj.poll(self)
     }
 }
-*/
+
 pub trait Iterator {
     type Item;
     fn next(&mut self) -> Option<Self::Item>;
 }
 
-impl<T: Coroutine<Return = (), Arg = ()>> Iterator for T
-{
+impl<T: Coroutine<(), Return = ()>> Iterator for T {
     type Item = T::Yield;
 
     fn next(&mut self) -> Option<Self::Item> {

@@ -5,17 +5,15 @@ pub enum CoroutineResult<Y, R> {
     Completed,
 }
 
-pub trait Awaitable {
-    type Arg;
+pub trait WaitFor<Object> {
     type Return;
-    fn await(&mut self, arg: Self::Arg) -> Option<Self::Return>;
+    fn wait_for(self, obj: &mut Object) -> Option<Self::Return>;
 }
 
-pub trait Coroutine {
+pub trait Coroutine<Arg> {
     type Yield;
     type Return;
-    type Arg;
-	fn resume(&mut self, arg: Self::Arg) -> CoroutineResult<Self::Yield, Self::Return>;
+	fn resume(&mut self, arg: Arg) -> CoroutineResult<Self::Yield, Self::Return>;
 }
 
 // In await!() An coroutine's must be equal to all the awaits's Awaitable::Arg
