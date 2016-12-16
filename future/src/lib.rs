@@ -1,111 +1,65 @@
 #![feature(never_type)]
 
 extern crate coroutine;
-
 use coroutine::*;
-use std::marker::PhantomData;
-/*
-/// Return type of future, indicating whether a value is ready or not.
-#[derive(Copy, Clone, Debug, PartialEq)]
-pub enum Async<T> {
-    /// Represents that a value is immediately ready.
-    Ready(T),
 
-    /// Represents that a value is not ready yet, but may be so later.
-    NotReady,
-}
+pub struct Ref<'e, E: 'e>(&'e mut E);
 
-pub type Poll<T, E> = Result<Async<T>, E>;
+impl<'e, E: Executor> Executor for Ref<'e, E> {
+    type Blocked = E::Blocked;
+} 
 
-pub struct Handle;
-
-pub trait FutureA {
-    type Item;
-
-    type Error;
-
-    fn poll(&mut self, handle: Handle) -> Poll<Self::Item, Self::Error>;
-}
-
-impl<T: Coroutine<Handle, Return = Result<R, E>, Yield = !>, R, E> FutureA for T {
-    type Item = R;
-    type Error = E;
-
-    fn poll(&mut self, handle: Handle) -> Poll<Self::Item, Self::Error> {
-        match self.resume(handle) {
-            CoroutineResult::Awaiting => Ok(Async::NotReady),
-            CoroutineResult::Return(r) => r.map(|v| Async::Ready(v)),
-            CoroutineResult::Yield(..) | CoroutineResult::Completed => unreachable!(),
-        }
-    }
-}
-
-impl<T: FutureA> WaitFor<T> for Handle {
-    type Return = Result<T::Item, T::Error>;
-
-    fn wait_for(self, obj: &mut T) -> Option<Self::Return> {
-        match obj.poll(self) {
-            Ok(Async::NotReady) => None,
-            Ok(Async::Ready(v)) => Some(Ok(v)),
-            Err(e) => Some(Err(e)),
-        }
-    }
-}
-*/
-pub struct EventLoop;
-
-pub trait Future {
+pub trait Future<E: Executor> {
     type Result;
 
-    fn poll(&mut self, event_loop: &mut EventLoop) -> Async<Self::Result>;
+    fn poll(&mut self, executor: Ref<E>) -> ComputationState<Self::Result, E::Blocked>;
 }
 
-impl<R, T: for<'a> Coroutine<&'a mut EventLoop, Yield = !, Return = R>> Future for T {
+impl<E: Executor, R, T: for<'e> Coroutine<Ref<'e, E>, Yield = !, Return = R>> Future<E> for T {
     type Result = R;
 
-    fn poll(&mut self, event_loop: &mut EventLoop) -> Async<Self::Result> {
-        match self.resume(event_loop) {
-            CoroutineResult::Awaiting => Async::NotReady,
-            CoroutineResult::Return(r) => Async::Ready(r),
-            CoroutineResult::Yield(..) | CoroutineResult::Completed => unreachable!(),
+    fn poll(&mut self, executor: Ref<E>) -> ComputationState<Self::Result, E::Blocked> {
+        match self.resume(executor) {
+            State::Blocked(b) => ComputationState::Blocked(b),
+            State::Complete(r) => ComputationState::Ready(r),
+            State::Yielded(..) => unreachable!(),
         }
     }
 }
 
-impl<'h, T: Future> Await<T> for &'h mut EventLoop {
+impl<'e, T: Future<E>, E: Executor> Await<T> for Ref<'e, E> {
     type Return = T::Result;
 
-    fn await(self, obj: &mut T) -> Async<Self::Return> {
+    fn await(self, obj: &mut T) -> ComputationState<Self::Return, E::Blocked> {
         obj.poll(self)
     }
 }
 
-pub trait Stream {
+pub trait Stream<E: Executor> {
     type Item;
     type Error;
 
-    fn poll(&mut self, event_loop: &mut EventLoop) -> Async<Result<Option<Self::Item>, Self::Error>>;
+    fn poll(&mut self, executor: Ref<E>) -> ComputationState<Result<Option<Self::Item>, Self::Error>, E::Blocked>;
 }
 
-impl<Y, E, T: for<'a> Coroutine<&'a mut EventLoop, Yield = Y, Return = Result<(), E>>> Stream for T {
+impl<E: Executor, Y, Err, T: for<'a> Coroutine<Ref<'a, E>, Yield = Y, Return = Result<(), Err>>> Stream<E> for T {
     type Item = Y;
-    type Error = E;
+    type Error = Err;
 
-    fn poll(&mut self, event_loop: &mut EventLoop) -> Async<Result<Option<Self::Item>, Self::Error>> {
-        match self.resume(event_loop) {
-            CoroutineResult::Awaiting => Async::NotReady,
-            CoroutineResult::Return(r) => Async::Ready(r.map(|_| None)),
-            CoroutineResult::Yield(y) => Async::Ready(Ok(Some(y))),
-            CoroutineResult::Completed => unreachable!(),
+    fn poll(&mut self, executor: Ref<E>) -> ComputationState<Result<Option<Self::Item>, Self::Error>, E::Blocked> {
+        match self.resume(executor) {
+            State::Blocked(b) => ComputationState::Blocked(b),
+            State::Complete(r) => ComputationState::Ready(r.map(|_| None)),
+            State::Yielded(y) => ComputationState::Ready(Ok(Some(y))),
         }
     }
 }
 
-impl<'h, T: Stream> AwaitElement<T> for &'h mut EventLoop {
+impl<'e, E: Executor, T: Stream<E>> AwaitElement<T> for Ref<'e, E> {
     type Item = T::Item;
     type Error = T::Error;
 
-    fn await(self, obj: &mut T) -> Async<Result<Option<Self::Item>, Self::Error>> {
+    fn await(self, obj: &mut T) -> ComputationState<Result<Option<Self::Item>, Self::Error>, E::Blocked> {
         obj.poll(self)
     }
 }
@@ -120,10 +74,9 @@ impl<T: Coroutine<(), Return = ()>> Iterator for T {
 
     fn next(&mut self) -> Option<Self::Item> {
         match self.resume(()) {
-            CoroutineResult::Return(..) |
-            CoroutineResult::Awaiting |
-            CoroutineResult::Completed => None,
-            CoroutineResult::Yield(v) => Some(v),
+            State::Complete(..) => None,
+            State::Yielded(v) => Some(v),
+            State::Blocked(..) => unreachable!(),
         }
     }
 }

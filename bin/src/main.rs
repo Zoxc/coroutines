@@ -10,15 +10,15 @@ use future::*;
 
 struct FutureTest;
 
-impl<H> Coroutine<H> for FutureTest {
+impl<H: Executor> Coroutine<H> for FutureTest {
 	type Yield = !;
 	type Return = usize;
-	fn resume(&mut self, executor: H) -> CoroutineResult<Self::Yield, Self::Return> {
-		CoroutineResult::Completed
+	fn resume(&mut self, executor: H) -> State<Self::Yield, Self::Return, H::Blocked> {
+		panic!()
 	}
 }
 
-fn hm() -> impl Future {
+fn hm<E: Executor>() -> impl Future<E> {
 	FutureTest
 }
 
@@ -27,8 +27,8 @@ struct IteratorTest;
 impl Coroutine<()> for IteratorTest {
 	type Yield = usize;
 	type Return = ();
-	fn resume(&mut self, executor: ()) -> CoroutineResult<Self::Yield, Self::Return> {
-		CoroutineResult::Completed
+	fn resume(&mut self, executor: ()) -> State<Self::Yield, Self::Return, !> {
+		panic!()
 	}
 }
 
