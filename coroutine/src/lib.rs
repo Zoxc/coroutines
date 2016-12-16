@@ -10,13 +10,19 @@ pub enum Async<T> {
     NotReady,
 }
 
-pub trait WaitFor<Object> {
+pub trait Await<Object> {
     type Return;
-    fn wait_for(self, obj: &mut Object) -> Async<Self::Return>;
+    fn await(self, obj: &mut Object) -> Async<Self::Return>;
 }
 
-pub trait Coroutine<Executor> {
+pub trait AwaitElement<Stream> {
+    type Item;
+    type Error;
+    fn await(self, obj: &mut Stream) -> Async<Result<Option<Self::Item>, Self::Error>>;
+}
+
+pub trait Coroutine<Args> {
     type Yield;
     type Return;
-	fn resume(&mut self, executor: Executor) -> CoroutineResult<Self::Yield, Self::Return>;
+	fn resume(&mut self, args: Args) -> CoroutineResult<Self::Yield, Self::Return>;
 }

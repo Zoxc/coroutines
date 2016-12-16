@@ -72,30 +72,41 @@ impl<R, T: for<'a> Coroutine<&'a mut EventLoop, Yield = !, Return = R>> Future f
     }
 }
 
-impl<'h, T: Future> WaitFor<T> for &'h mut EventLoop {
+impl<'h, T: Future> Await<T> for &'h mut EventLoop {
     type Return = T::Result;
 
-    fn wait_for(self, obj: &mut T) -> Async<Self::Return> {
+    fn await(self, obj: &mut T) -> Async<Self::Return> {
         obj.poll(self)
     }
 }
 
 pub trait Stream {
     type Item;
+    type Error;
 
-    fn poll(&mut self, event_loop: &mut EventLoop) -> Async<Option<Self::Item>>;
+    fn poll(&mut self, event_loop: &mut EventLoop) -> Async<Result<Option<Self::Item>, Self::Error>>;
 }
 
-impl<Y, T: for<'a> Coroutine<&'a mut EventLoop, Yield = Y, Return = ()>> Stream for T {
+impl<Y, E, T: for<'a> Coroutine<&'a mut EventLoop, Yield = Y, Return = Result<(), E>>> Stream for T {
     type Item = Y;
+    type Error = E;
 
-    fn poll(&mut self, event_loop: &mut EventLoop) -> Async<Option<Self::Item>> {
+    fn poll(&mut self, event_loop: &mut EventLoop) -> Async<Result<Option<Self::Item>, Self::Error>> {
         match self.resume(event_loop) {
             CoroutineResult::Awaiting => Async::NotReady,
-            CoroutineResult::Return(..) => Async::Ready(None),
-            CoroutineResult::Yield(y) => Async::Ready(Some(y)),
+            CoroutineResult::Return(r) => Async::Ready(r.map(|_| None)),
+            CoroutineResult::Yield(y) => Async::Ready(Ok(Some(y))),
             CoroutineResult::Completed => unreachable!(),
         }
+    }
+}
+
+impl<'h, T: Stream> AwaitElement<T> for &'h mut EventLoop {
+    type Item = T::Item;
+    type Error = T::Error;
+
+    fn await(self, obj: &mut T) -> Async<Result<Option<Self::Item>, Self::Error>> {
+        obj.poll(self)
     }
 }
 
