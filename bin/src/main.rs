@@ -9,11 +9,13 @@ use future::*;
 
 struct FutureTest<P>(Pong<P>);
 
-impl<P, R, H: Executor + Await<Pong<P>, Return=R>> Coroutine<H> for FutureTest<P> {
+impl<R, P, Await1Arg, Await1Ret, H: Executor + Await<Await1Arg, Return=Await1Ret>> Coroutine<H> for FutureTest<P> {
 	type Yield = !;
 	type Return = R;
 	fn resume(&mut self, executor: H) -> State<Self::Yield, Self::Return, H::Blocked> {
-		match executor.await(&mut self.0) {
+		let arg: &mut Await1Arg = &mut self.0;
+		let ret: Await1Ret = executor.await(arg);
+		match ret {
 			ComputationState::Ready(r) => State::Complete(r),
 			ComputationState::Blocked(b) => State::Blocked(b),
 		}
