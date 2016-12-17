@@ -38,7 +38,7 @@ impl Executor for () {
 
 pub fn run<C: Coroutine<(), Yield = !>>(mut coroutine: C) -> C::Return {
     match coroutine.resume(()) {
-        State::Return(r) => r,
+        State::Complete(r) => r,
         _ => panic!(),
     }
 }

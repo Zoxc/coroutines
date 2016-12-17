@@ -80,3 +80,47 @@ impl<T: Coroutine<(), Return = ()>> Iterator for T {
         }
     }
 }
+
+unsafe trait ImmobileFuture<E: Executor> {
+    type Result;
+
+    fn poll(&mut self, executor: Ref<E>) -> ComputationState<Self::Result, E::Blocked>;
+}
+
+unsafe impl<E: Executor, R, T: for<'e> Coroutine<Ref<'e, E>, Yield = !, Return = R>> ImmobileFuture<E> for T {
+    type Result = R;
+
+    fn poll(&mut self, executor: Ref<E>) -> ComputationState<Self::Result, E::Blocked> {
+        match self.resume(executor) {
+            State::Blocked(b) => ComputationState::Blocked(b),
+            State::Complete(r) => ComputationState::Ready(r),
+            State::Yielded(..) => unreachable!(),
+        }
+    }
+}
+
+struct EventLoop;
+
+impl Executor for EventLoop {
+    type Blocked = ();
+}
+
+pub struct RPC;
+
+impl<E: Executor> Future<E> for RPC {
+    type Result = usize;
+
+    fn poll(&mut self, executor: Ref<E>) -> ComputationState<Self::Result, E::Blocked> {
+        ComputationState::Ready(1)
+    }
+}
+
+pub struct Pong<T>(pub Option<T>);
+
+impl<T, E: Executor> Future<E> for Pong<T> {
+    type Result = T;
+
+    fn poll(&mut self, executor: Ref<E>) -> ComputationState<Self::Result, E::Blocked> {
+        ComputationState::Ready(self.0.take().unwrap())
+    }
+}

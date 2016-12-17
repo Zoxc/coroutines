@@ -1,5 +1,4 @@
 #![feature(conservative_impl_trait)]
-#![feature(core_intrinsics)]
 #![feature(never_type)]
 
 extern crate future;
@@ -8,18 +7,21 @@ extern crate coroutine;
 use coroutine::*;
 use future::*;
 
-struct FutureTest;
+struct FutureTest<P>(Pong<P>);
 
-impl<H: Executor> Coroutine<H> for FutureTest {
+impl<P, R, H: Executor + Await<Pong<P>, Return=R>> Coroutine<H> for FutureTest<P> {
 	type Yield = !;
-	type Return = usize;
+	type Return = R;
 	fn resume(&mut self, executor: H) -> State<Self::Yield, Self::Return, H::Blocked> {
-		panic!()
+		match executor.await(&mut self.0) {
+			ComputationState::Ready(r) => State::Complete(r),
+			ComputationState::Blocked(b) => State::Blocked(b),
+		}
 	}
 }
 
 fn hm<E: Executor>() -> impl Future<E> {
-	FutureTest
+	FutureTest(Pong(Some(4)))
 }
 
 struct IteratorTest;
@@ -37,5 +39,5 @@ fn hm2() -> impl Iterator {
 }
 
 fn main() {
-	hm();
+	hm::<()>();
 }
