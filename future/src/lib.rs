@@ -72,7 +72,9 @@ impl<E: Executor, T: Stream<E, Yield = !>> Future2<E> for T {
 // Stream only operations are probably very useful to remove from futures, since all of them would operate on the ! values
 // What error do you get if you use such a value?
 
-struct EventLoop;
+struct EventLoop {
+    sleeping: Vec<Box<Future<EventLoop, Result=()>>>,
+}
 
 impl Executor for EventLoop {
     type Blocked = ();
@@ -100,6 +102,19 @@ impl<T, E: Executor> Future<E> for Pong<T> {
 
 pub trait SleepExecutor: Executor {
     fn sleep(&mut self) -> State<!, (), Self::Blocked>;
+}
+
+impl<'e, E: SleepExecutor> SleepExecutor for ExecutorRef<'e, E> {
+    fn sleep(&mut self) -> State<!, (), Self::Blocked> {
+        self.0.sleep()
+    }
+}
+
+impl SleepExecutor for () {
+    fn sleep(&mut self) -> State<!, (), !> {
+        std::thread::sleep(std::time::Duration::from_millis(1000));
+        State::Complete(())
+    }
 }
 
 pub struct Sleep;

@@ -32,17 +32,17 @@ struct SleepTest;
 impl<E: SleepExecutor + Await<Sleep>> Generator<E> for SleepTest {
 	type Yield = !;
 	type Return = ();
-	fn resume(&mut self, executor: E) -> State<Self::Yield, Self::Return, E::Blocked> {
+	fn resume(&mut self, mut executor: E) -> State<Self::Yield, Self::Return, E::Blocked> {
 		executor.await(&mut Sleep);
 		State::Complete(())
 	}
 }
 
-fn sleep_test<E: Executor>() -> impl Future<E> {
+fn sleep_test<E: SleepExecutor>() -> impl Future<E> {
 	SleepTest
 }
 
-fn nested_sleep_test<E: Executor>() -> impl Future<E> {
+fn nested_sleep_test<E: SleepExecutor>() -> impl Future<E> {
 	sleep_test()
 }
 

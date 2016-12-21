@@ -666,3 +666,5 @@ Ensure destructor order is correct when panicking.
 
 Could you access generator arguments using a wrapper object and await on it?
     Yes - add an example for this!
+
+    Would this be useful to call methods on the executor too?
