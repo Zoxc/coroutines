@@ -29,11 +29,12 @@ fn return_test<E: Executor>() -> impl Future<E> {
 
 struct SleepTest;
 // Await1Arg   + Await<Await1Arg, Return=R>
-impl<E: SleepExecutor + Await<Sleep>> Generator<E> for SleepTest {
+impl<E: SleepExecutor + Await<E::Sleep>> Generator<E> for SleepTest {
 	type Yield = !;
 	type Return = ();
 	fn resume(&mut self, mut executor: E) -> State<Self::Yield, Self::Return, E::Blocked> {
-		executor.await(&mut Sleep);
+		let s = executor.sleep(1000);
+		executor.await(&mut s);
 		State::Complete(())
 	}
 }

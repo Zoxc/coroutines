@@ -6,6 +6,7 @@ use std::thread;
 use std::time::Duration;
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::cell::Cell;
 
 pub struct FutureExecutor<'e, E: 'e + ?Sized>(&'e mut E);
 
@@ -84,14 +85,14 @@ pub struct EventLoop {
 }
 
 pub struct Timer {
-    delta: u64,
+    delta: Cell<u64>,
     task: Task,
 }
 
 impl EventLoop {
     pub fn timer(&mut self, delta: u64) -> Rc<Timer> {
         let timer = Rc::new(Timer {
-            delta: delta,
+            delta: Cell::new(delta),
             task: self.current.as_ref().unwrap().clone()
         });
         self.timers.push(timer.clone());
@@ -120,12 +121,13 @@ impl EventLoop {
             let mut i = 0;
 
             while i < len {
-                if self.timers[i].delta == 0 {
+                if self.timers[i].delta.get() == 0 {
                     run!(self.timers[i].task.clone());
                     self.timers.remove(i);
                     len -= 1;
                 } else {
-                    self.timers[i].delta -= 1;
+                    let delta = self.timers[i].delta.get();
+                    self.timers[i].delta.set(delta - 1);
                     i += 1;
                 }
             }
@@ -223,9 +225,10 @@ impl Future<EventLoop> for AsyncSleep {
                 self.0 = SleepState::Started(executor.0.timer(delta));
                 State::Blocked(())
             }
-            SleepState::Started(ref timer) => match **timer {
-                Timer { delta: 0, .. } => State::Complete(()),
-                _ => State::Blocked(()),
+            SleepState::Started(ref timer) => if timer.delta.get() == 0 {
+                State::Complete(())
+            } else {
+                State::Blocked(())
             }
         }
     }
