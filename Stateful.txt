@@ -816,3 +816,8 @@ Major problem, if we implement Future for all generators, we cannot define furth
     Can we use some wrapper magic here? Must we expose this to the user?
 
 Can do we run into trait coherence problems with futures-rs too? Probably
+
+Use a Handle to the EventLoop struct. How to avoid an extra indirection here?
+    We kind of want 2 interfaces to the same type here!
+
+Use IntoGenerator for `await` and `await for`? https://docs.rs/futures/0.1/futures/future/trait.IntoFuture.html

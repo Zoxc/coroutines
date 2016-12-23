@@ -50,35 +50,3 @@ impl<T: Generator<(), Return = ()>> Iterator for T {
         }
     }
 }
-
-// A Future is a Generator<Yield = !> where the executor is passed by &mut E
-pub trait Future<E: Executor> {
-    type Result;
-
-    fn poll(&mut self, executor: &mut E) -> State<!, Self::Result, E::Blocked>;
-}
-
-impl<E: Executor, R, T: Generator<E, Yield = !, Return = R>> Future<E> for T {
-    type Result = R;
-
-    fn poll(&mut self, executor: &mut E) -> State<!, Self::Result, E::Blocked> {
-        self.resume(executor)
-    }
-}
-
-// A Stream is a Generator where the executor is passed by &mut E
-pub trait Stream<E: Executor> {
-    type Yield;
-    type Return;
-
-    fn poll(&mut self, executor: &mut E) -> State<Self::Yield, Self::Return, E::Blocked>;
-}
-
-impl<E: Executor, Y, R, T: Generator<E, Yield = Y, Return = R>> Stream<E> for T {
-    type Yield = Y;
-    type Return = R;
-
-    fn poll(&mut self, executor: &mut E) -> State<Self::Yield, Self::Return, E::Blocked> {
-        self.resume(executor)
-    }
-}

@@ -3,8 +3,9 @@
 
 extern crate future;
 extern crate coroutine;
-
+extern crate future_traits;
 use coroutine::*;
+use future_traits::*;
 use future::*;
 
 struct ReturnTest<F> {
@@ -33,17 +34,17 @@ impl<E: SleepExecutor> Generator<E> for SleepTest {
 	type Yield = !;
 	type Return = ();
 	fn resume(&mut self, mut executor: &mut E) -> State<Self::Yield, Self::Return, E::Blocked> {
-		let mut s = executor.sleep(1000);
-		s.poll(&mut executor);
+		let mut s = E::sleep(1000);
+		s.resume(&mut executor);
 		State::Complete(())
 	}
 }
 
-fn sleep_test<E: SleepExecutor>() -> impl Future<E> {
+fn sleep_test<E: SleepExecutor>() -> impl Generator<E> {
 	SleepTest
 }
 
-fn nested_sleep_test<E: SleepExecutor>() -> impl Future<E> {
+fn nested_sleep_test<E: SleepExecutor>() -> impl Generator<E> {
 	sleep_test()
 }
 
@@ -97,4 +98,5 @@ fn hm2() -> impl Iterator {
 }
 
 fn main() {
+	EventLoop::new().run(sleep_test());
 }
