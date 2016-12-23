@@ -21,7 +21,7 @@ impl<E: Executor, F: Fn(E) -> State<!, usize, E::Blocked>> Generator<E> for Retu
 
 fn return_test<E: Executor>() -> impl Future<E> {
 	ReturnTest {
-		next: |executor: ExecutorRef<_>| -> State<!, usize, E::Blocked> {
+		next: |executor: FutureExecutor<_>| -> State<!, usize, E::Blocked> {
 			State::Complete(3)
 		}
 	}

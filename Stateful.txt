@@ -668,3 +668,146 @@ Could you access generator arguments using a wrapper object and await on it?
     Yes - add an example for this!
 
     Would this be useful to call methods on the executor too?
+
+<Zoxc> vadimcn: Do you have a use case where you have to pass arguments to each resumption of a coroutine?
+<vadimcn> Zoxc: yes - a double-ended iterator, for example
+<vadimcn> another example would be an incremental parser into which data is "pushed"
+
+<Zoxc> vadimcn: Any ideas on how to reduce the syntactic overhead of that in cases of no arguments? or on how we would a coro keyword to closures?
+<vadimcn> Zoxc: something like #[gen] attribute?   Although, IMO it isn't necessary.  Nobody complains about returning closures when something callable needs to be returned, and this brand of coroutines is quite close to closures.
+
+Can we add Arg as another input to generators, which will default to () if unused?
+
+Use a syntax like coro(arg1: &str, arg2: &str) fn a() {}?
+Or coro fn a()(arg1: &str, arg2: &str)?
+Can we use a keyword inside the argument list to pass coroutine arguments and indicate that this is a coroutine?
+    Would also work with the closure syntax
+
+    Ideas for that? Can we use x y here too? so |coro a: int| or |coro| <- conflict! No
+
+    Keywords https://github.com/rust-lang/rust/blob/master/src/libsyntax/symbol.rs#L164
+
+Cannot have coro fn, since coro is not a keyword (would conflict with expressions) require fn coro
+Would the arguments magically change after a suspend point?
+
+Bad things with https://github.com/rust-lang/rfcs/pull/1823
+    Coroutine return types are not associative types? Is that true? Probably not.
+    Requiring closures in order to return generators
+    yield can't be nice for async
+
+Instead of passing arguments in, have a function which extracts them? May want syntax here
+    Access the argument with a `self`-like keyword
+    How to access the executor then?
+
+    Is ref free in expressions?
+
+    Use `ref arg` or `ref exeuctor`?
+
+    Keywords: https://github.com/rust-lang/rust/blob/master/src/libsyntax/symbol.rs#L164
+
+    Can we give warnings if coroutine arguments are unused, even if it isn't Result?
+
+    Problematic case with ref arg:
+        let mut r = ref arg;
+
+        if true {
+            yield
+        }
+
+        r = ref arg; // Illegal!
+
+        Not a problem with await since it borrows
+
+        Can this be integrated with borrowck dataflow?
+
+        Does this apply to normal variables? Yes!
+
+            let mut arg = String::new();
+
+            let mut  r = arg;
+
+            if true {
+                arg = String::new(); // Validate arg 
+            }
+
+            r = arg; // Illegal!
+
+        `ref arg` acts like an argument/variable except it's overwritten every suspend point.
+
+    Add ref executor too
+
+    Can we have `ref args` be sugar that extracts arguments from an executor wrapper?
+
+
+    We can use a closures like vadimcn's proposal only if we require arguments?
+
+Is there a reason for futures/streams to receive an argument?
+    Maybe pass down the reason for the resumtion of a task?
+        Or that could be stored in the executor?
+
+Should we wait for associated type constructors, so we can move await, await for to a higher level? What would that look like?
+    Can we move the executor to a higher level too? What was the problem there? INVESTIGATE, might result in a clearer async design on top
+
+Should you be able to Clone coroutines?
+
+Hm... so I can use `await for` and have await be a contextual keyword :D
+
+Add Arg as a type parameter to Generator
+    await might want to pass on both the argument and the executor!
+        Could it wrap it's argument in the executor then? Probably
+
+    Can we have Arg be an associated type? Why is it not for closures?
+        Would allow one object to implement multiple function calls with different arguments?
+            Is this useful?
+
+        <eddyb> Zoxc: because arguments are inputs
+        <Zoxc> eddyb: What do you mean by inputs?
+        <eddyb> Zoxc: I mean, if nothing else, lifetimes
+        <eddyb> Zoxc: for<'a> Trait<Assoc = &'a T> is wrong and banned
+        <eddyb> it has to be in an input position for it to be a lifetime input
+        <eddyb> Zoxc: ok so assuming you only care about lifetimes: associated types are *fully* determined by Self and arguments
+        <eddyb> Zoxc: aka trait inputs
+        <eddyb> Zoxc: so for<'a> has to be used in the trait inputs otherwise it can't appear in outputs
+        <eddyb> Zoxc: so with just associated items you can't represent Fn(&T) or Fn(&T) -> &U
+
+Can we have the executor be an associated type and still infer everything we'd like? How can we connect it up to type parameters on the generator fn<E: Executor> -> impl Generator // no <E>..
+    No
+
+Impl Await for suitable generators, so designs where generators == futures are possible
+
+Can we pass argument per resume to streams only for resuming from yields?
+    Does the passing arguments to parsers or iterator examples still apply?
+
+It doesn't make sense to pass resume arguments to futures for events, since they also would be passed when resuming streams after yields
+
+Can we introduce some magic for yield so await can be built on top?
+
+Hm.. would a remote double ended iterator make sense? https://github.com/vadimcn/rfcs/blob/coroutines2/text/0000-coroutines.md#double-ended-iterators
+
+Is the incremental parser example useful with providing arguments or is await better there?
+
+Pass the exeuctor by ownership so we can use a 0-sized type there (say PhathomData<&mut E>). Also allows optimization of arguments passed in
+    Passing by ownership doesn't work with Await? any solution there? Will we require inlining for optimization then anyway?
+        We can probably force inlining on the Await impl
+
+        LLVM can remove the unused argument if the function is local (which is likely)
+
+        Is there a way to have &mut which is 0-sized if its target type is?
+
+Can we guarantee the return of data on Blocked()? No - select() requires that we discard all but one Blocked() results 
+
+Can we optimize the state machine data layout if everything gets inline and we can prove that no addresses are taken?
+Can we always optimize annoynmous structs?
+
+Let the Task be passed as the executor argument instead of an EventLoop, let the Task hold a reference to the event loop.
+    Cleaner design? but more memory usage, use it for the example only?
+
+In our EventLoop timer function, can we ensure that a task is active? Does the above design achieve that?
+
+Unable to implement SleepExecutor for FutureExecutor. Must we require that Await traits are implemented in the Future library to fix this?
+    Or require that a Future is a Generator
+
+    Or move my Future and Stream definitions into libcore <- best option? Can futures-rs just implement them for their futures?
+        Test this!
+
+        Move &mut into the trait so chained FutureExecutor doesn't have overhead
