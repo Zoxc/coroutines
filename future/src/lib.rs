@@ -1,68 +1,15 @@
 #![feature(never_type)]
+#![feature(fundamental)]
 
 extern crate coroutine;
+extern crate future_traits;
 use coroutine::*;
 use std::thread;
 use std::time::Duration;
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::cell::Cell;
-
-pub struct FutureExecutor<'e, E: 'e + ?Sized>(&'e mut E);
-
-impl<'e, E: Executor> Executor for FutureExecutor<'e, E> {
-    type Blocked = E::Blocked;
-} 
-
-
-// A Future is a Generator<Yield = !> where the executor is passed by &mut E
-pub trait Future<E: Executor + ?Sized> {
-    type Result;
-
-    fn poll(&mut self, executor: FutureExecutor<E>) -> State<!, Self::Result, E::Blocked>;
-}
-
-impl<E: Executor, R, T: for<'e> Generator<FutureExecutor<'e, E>, Yield = !, Return = R>> Future<E> for T {
-    type Result = R;
-
-    fn poll(&mut self, executor: FutureExecutor<E>) -> State<!, Self::Result, E::Blocked> {
-        self.resume(executor)
-    }
-}
-
-impl<'e, T: Future<E>, E: Executor> Await<T> for FutureExecutor<'e, E> {
-    type Return = T::Result;
-
-    fn await(&mut self, obj: &mut T) -> State<!, Self::Return, E::Blocked> {
-        obj.poll(FutureExecutor(self.0))
-    }
-}
-
-// A Stream is a Generator where the executor is passed by &mut E
-pub trait Stream<E: Executor> {
-    type Yield;
-    type Return;
-
-    fn poll(&mut self, executor: FutureExecutor<E>) -> State<Self::Yield, Self::Return, E::Blocked>;
-}
-
-impl<E: Executor, Y, R, T: for<'e> Generator<FutureExecutor<'e, E>, Yield = Y, Return = R>> Stream<E> for T {
-    type Yield = Y;
-    type Return = R;
-
-    fn poll(&mut self, executor: FutureExecutor<E>) -> State<Self::Yield, Self::Return, E::Blocked> {
-        self.resume(executor)
-    }
-}
-
-impl<'e, E: Executor, T: Stream<E>> AwaitGenerator<T> for FutureExecutor<'e, E> {
-    type Yield = T::Yield;
-    type Return = T::Return;
-
-    fn await(&mut self, obj: &mut T) -> State<Self::Yield, Self::Return, E::Blocked> {
-        obj.poll(FutureExecutor(self.0))
-    }
-}
+use std::marker::Sized;
 
 // A Future is a Generator<Yield = !> where the executor is passed by &mut E
 pub trait Future2<E: Executor>: Stream<E, Yield = !> {
@@ -106,7 +53,7 @@ impl EventLoop {
             ($task:expr) => {
                 let task = $task;
                 self.current = Some(task.clone());
-                task.borrow_mut().poll(FutureExecutor(self));
+                task.borrow_mut().poll(self);
                 self.current = None;
             }
         }
@@ -144,26 +91,34 @@ pub struct RPC;
 impl<E: Executor> Future<E> for RPC {
     type Result = usize;
 
-    fn poll(&mut self, executor: FutureExecutor<E>) -> State<!, Self::Result, E::Blocked> {
+    fn poll(&mut self, executor: &mut E) -> State<!, Self::Result, E::Blocked> {
         State::Complete(1)
     }
 }
 
+impl Future<()> for RPC {
+    type Result = usize;
+
+    fn poll(&mut self, executor: &mut ()) -> State<!, Self::Result, !> {
+        State::Complete(1)
+    }
+}
+/*
 pub struct Pong<T>(pub Option<T>);
 
 impl<T, E: Executor> Future<E> for Pong<T> {
     type Result = T;
 
-    fn poll(&mut self, executor: FutureExecutor<E>) -> State<!, Self::Result, E::Blocked> {
+    fn poll(&mut self, executor: &mut E) -> State<!, Self::Result, E::Blocked> {
         State::Complete(self.0.take().unwrap())
     }
 }
-
-pub trait SleepExecutor: Executor {
+*/
+pub trait SleepExecutor: Executor where Self:Sized {
     type Sleep: Future<Self, Result = ()>;
     fn sleep(&mut self, delta: u64) -> Self::Sleep;
 }
-
+/*
 pub struct FutureSleep<E: SleepExecutor>(E::Sleep);
 
 impl<'e, E: SleepExecutor> SleepExecutor for FutureExecutor<'e, E> {
@@ -181,7 +136,7 @@ impl<'e, E: SleepExecutor> Future<FutureExecutor<'e, E>> for FutureSleep<E> {
         panic!()
     }
 }
-
+*/
 impl SleepExecutor for () {
     type Sleep = SyncSleep;
 
@@ -195,7 +150,7 @@ pub struct SyncSleep(u64);
 impl Future<()> for SyncSleep {
     type Result = ();
 
-    fn poll(&mut self, executor: FutureExecutor<()>) -> State<!, Self::Result, !> {
+    fn poll(&mut self, executor: &mut ()) -> State<!, Self::Result, !> {
         thread::sleep(Duration::from_millis(self.0));
         State::Complete(())
     }
@@ -219,10 +174,10 @@ pub struct AsyncSleep(SleepState);
 impl Future<EventLoop> for AsyncSleep {
     type Result = ();
 
-    fn poll(&mut self, executor: FutureExecutor<EventLoop>) -> State<!, Self::Result, ()> {
+    fn poll(&mut self, executor: &mut EventLoop) -> State<!, Self::Result, ()> {
         match self.0 {
             SleepState::Pending(delta) => {
-                self.0 = SleepState::Started(executor.0.timer(delta));
+                self.0 = SleepState::Started(executor.timer(delta));
                 State::Blocked(())
             }
             SleepState::Started(ref timer) => if timer.delta.get() == 0 {

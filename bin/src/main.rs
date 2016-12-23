@@ -1,5 +1,5 @@
 #![feature(conservative_impl_trait)]
-#![feature(never_type)]
+#![feature(never_type, fundamental_attribute)]
 
 extern crate future;
 extern crate coroutine;
@@ -11,17 +11,17 @@ struct ReturnTest<F> {
 	next: F,
 }
 
-impl<E: Executor, F: Fn(E) -> State<!, usize, E::Blocked>> Generator<E> for ReturnTest<F> {
+impl<E: Executor, F: Fn(&mut E) -> State<!, usize, E::Blocked>> Generator<E> for ReturnTest<F> {
 	type Yield = !;
 	type Return = usize;
-	fn resume(&mut self, executor: E) -> State<Self::Yield, Self::Return, E::Blocked> {
+	fn resume(&mut self, executor: &mut E) -> State<Self::Yield, Self::Return, E::Blocked> {
 		(self.next)(executor)
 	}
 }
 
 fn return_test<E: Executor>() -> impl Future<E> {
 	ReturnTest {
-		next: |executor: FutureExecutor<_>| -> State<!, usize, E::Blocked> {
+		next: |executor: &mut E| -> State<!, usize, E::Blocked> {
 			State::Complete(3)
 		}
 	}
@@ -29,12 +29,12 @@ fn return_test<E: Executor>() -> impl Future<E> {
 
 struct SleepTest;
 // Await1Arg   + Await<Await1Arg, Return=R>
-impl<E: SleepExecutor + Await<E::Sleep>> Generator<E> for SleepTest {
+impl<E: SleepExecutor> Generator<E> for SleepTest {
 	type Yield = !;
 	type Return = ();
-	fn resume(&mut self, mut executor: E) -> State<Self::Yield, Self::Return, E::Blocked> {
-		let s = executor.sleep(1000);
-		executor.await(&mut s);
+	fn resume(&mut self, mut executor: &mut E) -> State<Self::Yield, Self::Return, E::Blocked> {
+		let mut s = executor.sleep(1000);
+		s.poll(&mut executor);
 		State::Complete(())
 	}
 }
@@ -87,7 +87,7 @@ struct IteratorTest;
 impl Generator<()> for IteratorTest {
 	type Yield = usize;
 	type Return = ();
-	fn resume(&mut self, executor: ()) -> State<Self::Yield, Self::Return, !> {
+	fn resume(&mut self, executor: &mut ()) -> State<Self::Yield, Self::Return, !> {
 		panic!()
 	}
 }

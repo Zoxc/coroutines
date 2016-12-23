@@ -811,3 +811,8 @@ Unable to implement SleepExecutor for FutureExecutor. Must we require that Await
         Test this!
 
         Move &mut into the trait so chained FutureExecutor doesn't have overhead
+
+Major problem, if we implement Future for all generators, we cannot define further future implementations
+    Can we use some wrapper magic here? Must we expose this to the user?
+
+Can do we run into trait coherence problems with futures-rs too? Probably

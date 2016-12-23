@@ -5,3 +5,4 @@ authors = ["John Kåre Alsaker <john.kare.alsaker@gmail.com>"]
 
 [dependencies]
 coroutine = { path = "../coroutine" }
+future_traits = { path = "../future-traits" }
