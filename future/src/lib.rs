@@ -81,10 +81,10 @@ impl EventLoop {
         }
     }
 
-    pub fn timer(&mut self, delta: u64) -> Rc<Timer> {
+    fn timer(&mut self, task: Task, delta: u64) -> Rc<Timer> {
         let timer = Rc::new(Timer {
             remaining: Cell::new(delta),
-            task: self.current.as_ref().unwrap().clone()
+            task: task,
         });
         self.timers.push(timer.clone());
         timer
@@ -97,29 +97,32 @@ impl EventLoop {
     }
 
     pub fn run<F: Generator<Self, Return=(), Yield=!> + 'static>(&mut self, future: F) {
-        assert!(self.current.is_none());
-
         let task = Rc::new(RefCell::new(future));
+
+        if self.current.is_some() {
+            // We are currently inside the event loop, add the task to the list of tasks to run
+            self.timer(task, 0);
+            return;
+        }
+
         self.run_task(task);
 
         while !self.timers.is_empty() {
-            thread::sleep(Duration::from_millis(1));
-
-            let mut len = self.timers.len();
             let mut i = 0;
 
-            while i < len {
+            while i < self.timers.len() {
                 if self.timers[i].remaining.get() == 0 {
                     let task = self.timers[i].task.clone();
                     self.run_task(task);
                     self.timers.remove(i);
-                    len -= 1;
                 } else {
                     let remaining = self.timers[i].remaining.get();
                     self.timers[i].remaining.set(remaining - 1);
                     i += 1;
                 }
             }
+
+            thread::sleep(Duration::from_millis(1));
         }
     }
 }
@@ -151,7 +154,7 @@ impl<T, E: Executor> Future<E> for Pong<T> {
 }
 */
 pub trait SleepExecutor: Executor where Self:Sized {
-    type Sleep: Future<Self, Return=(), Yield=!>;
+    type Sleep: Future<Self, Return=()>;
     fn sleep(delta: u64) -> Self::Sleep;
 }
 /*
@@ -215,7 +218,8 @@ impl Generator<EventLoop> for AsyncSleep {
     fn resume(&mut self, executor: &mut EventLoop) -> State<!, Self::Return, ()> {
         match self.0 {
             SleepState::Pending(delta) => {
-                self.0 = SleepState::Started(executor.timer(delta));
+                let task = executor.current.as_ref().unwrap().clone();
+                self.0 = SleepState::Started(executor.timer(task, delta));
                 State::Blocked(())
             }
             SleepState::Started(ref timer) => if timer.remaining.get() == 0 {
@@ -228,3 +232,26 @@ impl Generator<EventLoop> for AsyncSleep {
 }
 
 // can do await E::sleep(343)
+
+pub struct ArgsExecutor<T>(Option<T>);
+
+impl<T> ArgsExecutor<T> {
+    pub fn new(args: T) -> Self {
+        ArgsExecutor(Some(args))
+    }
+}
+
+impl<T> Executor for ArgsExecutor<T> {
+    type Blocked = !;
+}
+
+pub struct ArgsExtractor;
+
+impl<T> Generator<ArgsExecutor<T>> for ArgsExtractor {
+    type Yield = !;
+    type Return = T;
+
+    fn resume(&mut self, executor: &mut ArgsExecutor<T>) -> State<!, Self::Return, !> {
+        State::Complete(executor.0.take().expect("arguments already extracted"))
+    }
+}

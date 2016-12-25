@@ -40,11 +40,11 @@ impl<E: SleepExecutor> Generator<E> for SleepTest {
 	}
 }
 
-fn sleep_test<E: SleepExecutor>() -> impl Generator<E> {
+fn sleep_test<E: SleepExecutor>() -> impl Future<E, Return=()> {
 	SleepTest
 }
 
-fn nested_sleep_test<E: SleepExecutor>() -> impl Generator<E> {
+fn nested_sleep_test<E: SleepExecutor>() -> impl Future<E, Return=()> {
 	sleep_test()
 }
 

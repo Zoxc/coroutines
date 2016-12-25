@@ -820,4 +820,20 @@ Can do we run into trait coherence problems with futures-rs too? Probably
 Use a Handle to the EventLoop struct. How to avoid an extra indirection here?
     We kind of want 2 interfaces to the same type here!
 
+    Use unsafe code to cast an EventLoop to an Handle and back? Make Handle unsized.
+
 Use IntoGenerator for `await` and `await for`? https://docs.rs/futures/0.1/futures/future/trait.IntoFuture.html
+
+Panicking after returns is more efficient. We don't have to check for errors in the callee.
+
+Can we let the argument to pass be a associated type of the Executor?
+    say type Handle; doesn't seem to help with the borrowing..
+
+What happens if we drop a timer in our example?
+    Can we test if the ref count is 1?
+
+Add a spawn method to our executor examples?
+
+ArgsExecutor means creating wrappers for SleepExecutor, etc. not very ergonomic
+
+How to deal with lifetimes in arguments? Must we add them to the impl result?
