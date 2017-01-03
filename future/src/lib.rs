@@ -202,6 +202,18 @@ impl SleepExecutor for EventLoop {
     fn sleep(delta: u64) -> Self::Sleep {
         AsyncSleep(SleepState::Pending(delta))
     }
+
+    /* impl as generator!
+    fn sleep(delta: u64) -> Self::Sleep {
+        let executor = extract executor;
+        executor.timer(task, delta);
+        loop {
+            if timer.remaining.get() == 0
+                return ();
+            yield State::Blocked(());
+        }
+    }
+     */
 }
 
 enum SleepState {

@@ -466,6 +466,9 @@ Add suspend points to the list
                 }
             }
 
+        Make sure we handle cases where lifetimes are explicitly used to pass to data.
+            It won't be an error to treat these as local?
+
         Later on we enumerate all suspends points and check if any variables are flagged there. If they are, ensure that the lifetime of the variable doesn't intersect with the suspend point.
 
         We can enumerate borrows and compute if they can be flagged. If they can be, ensure that no suspend points are in it's lifetime.
@@ -518,6 +521,7 @@ Add suspend points to the list
 
         Can we have borrows which cross suspends points without variables?
         (&mut local_var)(suspend)?
+            Yes!
 
         We also need to catch variable state crated with alloca! and prevent it from crossing state points
             Just banning alloca! in generators would suffice. Users can refactor it into regular functions!
@@ -837,3 +841,423 @@ Add a spawn method to our executor examples?
 ArgsExecutor means creating wrappers for SleepExecutor, etc. not very ergonomic
 
 How to deal with lifetimes in arguments? Must we add them to the impl result?
+    If we don't require that, we must add the bounds that they outlive the state struct
+
+    We have to act as if they are stored in the state struct. We need non-lexical lifetimes if we want their lifetime to be shorter.
+
+TODO:
+    Check if we can have IntoGenerator and implement that for downstream Futures or awaitable objects like RPCs?
+        Looks a lot like our Await trait, same trait coherence problems? It has the type parameters reversed, so maybe not
+    Add a spawn function to our executor example?
+    Provide an alternative `await` syntax
+    Keep Await and AwaitGenerator so future changes to trait coherence rules would allow futures-rs to support it?
+    Just have blanket impls for Generators for now?
+        Would this just be IntoGenerator? Kinda. Should we pick IntoGenerator or Await then?
+
+Need a way to access the executor in HIR!
+
+
+<Zoxc> Is changing `for` to take IntoIterator instead of Iterator backwards compatible?
+
+Suspend would be a terminator in MIR with two paths like call, the unwind path gives the actions to take if the generator is dropped during the call
+
+What would inlinig of a generator (pre-transform) into another look like?
+    Look at LLVM!
+
+    Inlining await seems simple. Inlining yield is more tricky? Look at LLVM for these 2 cases
+
+    Does it only make sense to combine generators if their suspend type match? Also possible to ignore ! when matching. So futures and iterators can both be merged into a stream
+        Can we do this optimization if we only have Yield and Return, no Blocked?
+
+        Can we only inline await expressions?
+            Do we need await on the MIR level for this?
+
+            This is just normal function inlining pre-transformation? Or is it, look at the loop on the caller side
+                How can we detect if it's illegal (other than just await inside)
+
+    Can we have some more general state machine optimization?
+
+    We can inline iterators and streams, but only if we have some yield_from / yield_await_from construct?
+
+    Syntax yield.., this just suspends when the caller does, until it hits Return.
+        Is this equal to await when Yield=!? It seems so!
+
+        What is the return value there? The return of the generatored yield..'ed, Yes.
+
+            yield.. passes in the arguments from the caller to callee!
+
+            We can use it to access the argument like my await trick
+
+    Can we extend this optimization to leaf RPC futures? Doesn't seem to make sense
+
+    How can yield.. pass on the executor for await? Let it be able to pass a single value on each yield?
+        How does borrows work with this?
+
+<Zoxc> nmatsakis: Hm.. what about running the transformation right after MIR generation, then run borrowck. Then we revert to the pre-transformation MIR and run optimizations and use that for further passes
+<Zoxc> nmatsakis: I think that makes a lot of sense since there are cases were we only do the transformation to run borrowck.
+<Zoxc> nmatsakis: Say if the yield type is !, we must do the transformation just for borrowck
+<Zoxc> Hm.. we don't actually want to transform until monomorphization in that case
+<Zoxc> If we know the yield type is !, we could just run borrowck pre-transform and ignore suspends
+<Zoxc> So I guess we'd want two kinds of transformations, one where all suspend operations are replaced with unreachable statements
+<Zoxc> Each function would have 2 MIR outputs, and we'd pick the one to use for LLVM IR generation
+
+Hm... in the above case we could allow borrowck to ignore suspends?
+
+monomorphization
+
+Have some syntax on `fns` for generators and reserve await inside there only!!!
+    Can we deal with `await` identifers in macros, does hygiene save us here?
+
+    Can we have a postfix syntax let a = read() =>?; which composes better with?
+
+    Wouldn't be able to make macros that use await.. :/
+
+
+Note that the Drop impl will require a 3rd MIR body
+
+Have Args be an associated type of Executor and use it for both arguments and the executor handle
+    Can we have await require that the handle is &mut T for some T?
+
+    Can we implement a Handle<'h>(&'h mut EventLoop)?
+
+    Require Deref on it for Await?
+    Hm.. we need a reborrow function which produces another Handle? Can this work?
+
+To Poll() the to get into the yield position, can we use some type level state machine and an impl Consumer trait which does the poll() for us?
+    Can we have an "constructor" for the Consumer trait which turns object of another trait into it?
+
+    Like have the provide() method call resume(None), then resume(Some(input)) the first time?
+
+    So the argument value to a generator would be Option<T>, but yield returns T! So yield is an operation on top of suspend here. We can define the Consumer trait and yield! macro on top.
+
+    Can we tie the yield! macro to the Consumer trait implementation for Generators somehow to avoid the panic overhead?
+
+The same trait coherence problem applies to `yield from` for Iterators as it did for Futures. We want to use a IntoGenerator trait here, but can't actually implement it. We want to be able to yield from existing iterators and futures. The solution of having futures just be generators won't work for iterators.
+
+If we do borrowck after a transformation of MIR using liveness analysis, we could end up with "illegal" programs,
+    like
+        let x = &mut 4;
+        yield;
+    it would pass that, but not a normal borrowck pre-transformation
+    can this result in problems?
+
+    x isn't alive across the suspend point here
+
+    Can we use a transformation which lifts all variables/temporaries into the state struct?
+
+    We would like to use the lifetimes computed by MIR borrowck in other to do this transformation so no "illegal" programs would be allowed. This would require borrowck to run before the transformation!
+
+Look at async/await in C# (and the Midori os project)
+    http://joeduffyblog.com/2015/11/03/blogging-about-midori/
+
+http://joeduffyblog.com/2015/11/19/asynchronous-everything/
+
+For RPC, do we have to store both the arguments (since we must wait until poll too create it) and the result? 
+    Maybe I'm wrong here. Look at what tokio /cpupool does
+
+    The timer example will need to be fixed then....
+
+For the trait coherence problems can we have fn() => yield FutureWrapper which wraps the body in a Future struct?
+The FutureWrapper struct implement Future if the contained item implements Generator.
+IntoGenerator just returns the inner body there
+Can the FutureWrapper struct have bounds on the generator inside which gets applied
+
+If the return type is plain impl Trait and that Trait has an attribute with indicates a wrapper struct, wrap the return value of the function in that struct. struct IteratorWrapper<T>(T) should implement Iterator if T does.
+    Maybe do this only when the function is marked as a generator?
+
+We kind of want a function from traits to wrapper structs here. So we can return impl Future.
+
+We can implement IntoGenerator for all Iterator and specialize for IteratorWrapper
+
+<nmatsakis> Zoxc: seems like a problem :) some of the techniques I descirbed in my blog posts about improving specialization would be applicable, but otherwise I suspect a newtype would be needed (e.g., `struct GeneratorIterator<G>`, which impl Iterator for all G: Generator)
+
+Extracting the arguemnt with yield.. might run into borrowck issues since it has a suspend point
+    You could move the extraction to the top or the previous suspend point to avoid these issues
+
+Look at asyncio in python
+
+Can we let await! just wrap the future in a YieldFuture() struct?
+
+How can reborrow the exeuctor like await in yield.. ?
+
+Do we need 3 variants of yield from? yield.., yield mut.., yield ref mut..
+    Or will type inference help us?
+        I think type inference helps here
+
+
+http://smallcultfollowing.com/babysteps/blog/2016/09/24/intersection-impls/
+http://smallcultfollowing.com/babysteps/blog/2016/10/24/supporting-blanket-impls-in-specialization/
+
+Make sure a future combinator in another crate which is generic over executors work
+
+Can you implement try! with coroutines?
+    https://channel9.msdn.com/Shows/C9-GoingNative/GoingNative-39-await-co-routines
+    ^^ example
+
+Add conditional initial suspend like C++?
+    Use an associated constant?
+    How do we tie it up to the generator type?
+
+    It would be somelike like RealReturnType: Generator?
+
+    Can we have somethinglike trait GeneratorInfo, and implement it for Futures, etc.?
+
+    We can bring back our Executor type parameter/trait, and call it Abstraction instead.
+    Abstraction gives us information about how generators should work.
+        We could also possibly wrap the returned generator in the concrete Abstraction type?
+            Could help with specialization?
+
+        Hm.. a initial suspend point wou
+
+        Can we have Args be an associated type of Abstraction?
+
+        We kinda want ATC here for yield and return type
+        How will `await`/`yield from` and `await for` work here?
+
+    Does futures-rs allow generators without initial suspend?
+        Must this match the behavior of native functions returning futures?
+            That probably makes sense
+
+        This means the event loop might not be running when we create a future!
+            tokio passed the event loop explicitly to get around this
+
+        What should we do with the return values then? Say we yield something in the first call?
+            For futures, we store the return value in the futures itself.
+            For streams, can we store one element of the stream inline?
+                Would implementation of streams buffer such elements anyway?
+                    Such buffers might be part of a lower abstraction?
+                        We won't get a return value out from lower abstractions! since we just get a Stream
+
+        Are will streams require poll() first like generators?
+
+        Can we optimize out our "Tasks" which needs to be poll()'ed to start on the lowest levels?
+            Can we write the low level code (RPC, sleep, etc.) using generators to manage state?
+
+    Does having futures require poll() first run into problems with borrows.
+        Say https://tokio-rs.github.io/tokio-core/tokio_core/net/struct.TcpStream.html
+        We'd capture the &str there, and it cannot live across a suspend point!
+            I can't think of a problematic case
+            But this is less flexible. We'd have to await on it immediately!
+
+        Futures has to live across suspend points so letting them hold references to locals isn't possible.
+
+        Can we have await() poll the future once which returns another future which is 'static? 
+            So IntoGenerator/Await would return a Generator which is 'static?
+
+            Let resume() take the future by ownership and return another which is "compatible", but 'static
+                Probably best to have another prime() function call
+
+                Could possibly have multiple prime() stages at the type level, so and each stage can lose a lifetime variable bound? Probably can't express that at the type level, and doesn't play well with await being a loop
+
+                We need to detect variables alive at the first suspend point?
+
+                How can we detect the point to prime a generator at?
+                    Does it makes sense to prime after a suspend point?
+                        Probably not for await atleast
+
+                    What will we do if we have the first suspend point in a loop?
+                        Do the first iteration of it?
+
+                Hm.. we need a primed generator which isn't 'static, but have just less type variable bounds.
+                    How can we manage this?
+                        Probably need a bound on the primed type in the function?
+                        Can we express that the primed type "outlives" the non-primed one? So lifetime bounds can't increase?
+
+                Can we have a PrimeGenerator trait which is only implemented for generators where priming has an effect.
+                await will specialize it's implementation based on wether PrimeGenerator is implemented or not.
+                    Join future combinators will need something more flexible?
+
+                    Join<A,B>::HasPrime = A::HasPrime || B::HasPrime;
+
+                    Can we have such a constant? We require the value of it during type checking in order to decide if we are going to prime a future or not.
+                        Would we have to specify it in the return impl Trait of functions?
+                            Probably
+
+                        Can we somehow pick resume() over prime() later on without resulting in unsafety?
+                        Can we share the representation of the Generator and the primed generator so resume() and prime() work on the same representation?
+                            They probably only need to share storage location of arguments and the state?
+
+                            Can we apply this trick to the inlined loop too?
+                                Only if the future is actually a generator..
+                                We won't know until monomorphization
+                                    We'd like to inline things before then
+
+                                    Could we inline the future before then before? We'd also need to know if it was a generator
+                                    If we know it is a generator, we can apply this optimization
+
+                                    Should we inline even if we don't know if it is a generator?
+                                        If we can inline, we know if it's a generator or not, we always want to inline
+
+                                Like we don't call prime(), but just resume() we we know will be valid.
+
+                Can we have "priming" be some type system feature?
+                    So calling resume() removes lifetime bounds on Self?
+
+                We could have Gen::Prime be non-movable. This would allow us to have futures that don't move during await?
+
+                    Think non-movable generators.
+                        let result = something();
+                        await result;
+
+                        Here result can't be non-movable since it actually moves.
+                            Can we run some optimizations to remove the move before rejecting this code?
+
+                    Can we have lifetimes which are related to the lifetime of an object?
+
+                    Think of await <expr> as constructing the <expr> inplace
+
+                    Can we have a PinnedGenerator which Generator maps to, only used inside combinators and await?
+
+                Can we have pin() operation work for priming?
+                    We'd need to have it call resume() for us. So it has to pass the resume argument.
+                    It also may return some value
+
+                Can we have generators use allocation to prevent them from moving?
+                    Probably a good idea.
+                    So we'd have a pin() operation which allocates memory for the generator
+                    We could pass down the allocator to use as a hidden argument (like the executor)
+
+                    Does this require no modification to the borrow checker?
+
+                    This does add unsafe code for callers of generators. How will we deal with that?
+                        We can pass in an allocator type which deals with the unsafety!
+
+                    It doesn't really have to be unsized, the real generator would just be inaccessible
+
+                    Check if LLVM coroutine support would allow use to allocate memory for it when the generator is run (as opposed to when it's constructed)
+                        Hm.. we need to reference the functions after the split
+
+                    How can we deal with allocation failure?
+                        Panicking is too restrictive (for microkernel servers), so we need a way to deal with it.
+
+                    Can LLVM's coroutine support deal with our inlining-await.rs example?
+
+                    How can we capture lifetime parameters here? Would we just capture the parameters of all the arguments always?
+                        I think that works.
+
+                    Use the box keyword to indicate allocation:
+                        fn a() => box impl Future
+
+                    Now await must allocate and free memory, how will we make it generic over boxed generators and unboxed generators?
+                        Can we make Allocator be a part of all generators?
+
+                    How will we use await on boxed generators inside generators which doesn't allocate?
+                        We will need to provide one
+
+                    Can we write code that is generic over sync/async but doesn't allocate in the sync case?
+                        We can use alloca() to allocate space, which would get optimized to a stack frame allocation.
+                        But how do we do that only in a sync case?
+                        Do we need to do that in the sync case only? Can we use this to avoid all allocations (besides the initial)?
+                            We can only do this if we don't yield. Since a variable length allocation doesn't last to after returns.
+
+                            So if await returns !, use variable length allocation for it.
+                                Can we let the allocation size be a constant, to guaranatee that this turns into a normal stack allocation?
+
+                    Can we let boxed generators change the semantics of await?
+                        Probably the best solution. So unboxed generators can only await on unboxed generators.
+                        And boxed generators can wait wait on both?
+                            This is still generic :/
+
+                            We can just require it to wait on boxed generators, and require conversions for the rare case we want to wait on unboxed ones.
+
+                        This does require futures to have boxed and unboxed variants?
+                            Can futures just implement IntoUnboxedGenerator and IntoBoxedGenerator?
+                            Will futures want to implement both?
+
+                        We do want both unboxed and boxed generators to impl Iterator, but we do have to allocate the boxed ones first.
+
+                    Specify that await may use the generator frame of the caller instead of allocating a new one
+
+                    Can we impl Future for T: BoxedGenerator and impl Future for T: UnboxedGenerator?
+                        Wrap the generators in BoxedGeneratorWrapper and UnboxedGeneratorWrapper to avoid this?
+
+
+                    Can we have a reference counted generator?
+
+                    Can we turn a boxed generator into an unboxed one by allocating the frame?
+
+                    Return a type which implements:
+                    trait GeneratorConstructor<Args> {
+                        type Return;
+                        type Yield;
+                        type Gen: Generator<Args, Return=Self::Return, Yield=Self::Yield>;
+                        fn construct<A>(allocator: A) -> Self::Gen;
+                    }
+
+                    The type GeneratorConstructor::Gen must be anonymous since it captures the lifetimes of the arguments.
+
+                    Have an alloc() method returning an unboxed generator and store the allocate used inside the frame and pass it on using await
+                        Have alloc<A: Allocator> -> Struct<A>
+                        Need impl Trait in traits for this!
+                        Drop needs access to the allocatore, so we store it inside
+
+                    Make Allocator a type parameter of the trait so Future can default it to the global allocator
+
+                    Can we use a single type for boxed generators and store the frame pointer into it?
+                        Requires that allocators be part of standard Generators
+
+                    Pros:
+                        Can write recursive generators
+                        Allows persistent references to local variables, which is useful for generating unique IDs for RPC (and probably other things)
+                            We need to require that these IDs aren't reused too soon. How would we do that? 
+                        Can write the results of the future directly into to the generator frame, without a separate allocation
+                        We don't need a way to access the implicit argument, since suspend points don't invalidate anything.
+
+                Priming require us to duplicate poll() methods of future combinators?
+                    Does this prevent optimizations? Possibly
+                        Can the above feature help?
+
+                        Can we write select() and join() as generators?
+
+                        join(a, b) {
+                            await a;
+                            await b;
+                        }
+
+                        select(a, b) {
+
+                        }
+
+                        Hm.. select would need to prime both generators, but can also get the result of both!
+                        It will a bit more logic.
+
+                    Can we just prime all futures and then call poll on the result?
+
+
+
+                With priming we'd need a way to get the argument without introducing a new suspend point
+
+                How will priming work with a conditional suspend point?
+                    We use the variables which are alive at the conditional suspend point
+
+                Can we have futures were we only can prime() xor resume()? where prime() only works in the initial state.
+
+                Have a default implementation for Prime and prime() on Futures/Generators
+
+                Can https://github.com/rust-lang/rfcs/pull/1823 deal with priming due to the closures approach?
+                    I don't think so
+
+                We only really need to specify the lifetime bounds after awaiting, have some sugar for this?
+                    Let => imply all the lifetimes of args are captured?
+
+    http://www.open-std.org/jtc1/sc22/wg21/docs/papers/2016/p0057r5.pdf
+    https://isocpp.org/files/papers/N4402.pdf
+    http://www.open-std.org/jtc1/sc22/wg21/docs/papers/2015/n4453.pdf
+
+    https://gist.github.com/jamboree/a2b3fe32eeb8c21e820c
+
+yield as generator for syntax?
+or just yield from (also works)
+
+Should we have magic for panics like C++ and Python?
+
+How can C++ do await without a loop?
+    It uses a callback based system
+
+Python uses `async for` instead of `await for`
+
+Can we later add support for futures using callbacks in Rust if we get non-movable types?
+
+PROBLEM: We need to ban recursive generators. They result in recursive types. That is the generator frame contains itself.
+    We also need to ban mutually recursive generators.
+        We also can't allow this due to impl Trait?
