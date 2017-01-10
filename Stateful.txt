@@ -1113,95 +1113,7 @@ Add conditional initial suspend like C++?
                     It also may return some value
 
                 Can we have generators use allocation to prevent them from moving?
-                    Probably a good idea.
-                    So we'd have a pin() operation which allocates memory for the generator
-                    We could pass down the allocator to use as a hidden argument (like the executor)
-
-                    Does this require no modification to the borrow checker?
-
-                    This does add unsafe code for callers of generators. How will we deal with that?
-                        We can pass in an allocator type which deals with the unsafety!
-
-                    It doesn't really have to be unsized, the real generator would just be inaccessible
-
-                    Check if LLVM coroutine support would allow use to allocate memory for it when the generator is run (as opposed to when it's constructed)
-                        Hm.. we need to reference the functions after the split
-
-                    How can we deal with allocation failure?
-                        Panicking is too restrictive (for microkernel servers), so we need a way to deal with it.
-
-                    Can LLVM's coroutine support deal with our inlining-await.rs example?
-
-                    How can we capture lifetime parameters here? Would we just capture the parameters of all the arguments always?
-                        I think that works.
-
-                    Use the box keyword to indicate allocation:
-                        fn a() => box impl Future
-
-                    Now await must allocate and free memory, how will we make it generic over boxed generators and unboxed generators?
-                        Can we make Allocator be a part of all generators?
-
-                    How will we use await on boxed generators inside generators which doesn't allocate?
-                        We will need to provide one
-
-                    Can we write code that is generic over sync/async but doesn't allocate in the sync case?
-                        We can use alloca() to allocate space, which would get optimized to a stack frame allocation.
-                        But how do we do that only in a sync case?
-                        Do we need to do that in the sync case only? Can we use this to avoid all allocations (besides the initial)?
-                            We can only do this if we don't yield. Since a variable length allocation doesn't last to after returns.
-
-                            So if await returns !, use variable length allocation for it.
-                                Can we let the allocation size be a constant, to guaranatee that this turns into a normal stack allocation?
-
-                    Can we let boxed generators change the semantics of await?
-                        Probably the best solution. So unboxed generators can only await on unboxed generators.
-                        And boxed generators can wait wait on both?
-                            This is still generic :/
-
-                            We can just require it to wait on boxed generators, and require conversions for the rare case we want to wait on unboxed ones.
-
-                        This does require futures to have boxed and unboxed variants?
-                            Can futures just implement IntoUnboxedGenerator and IntoBoxedGenerator?
-                            Will futures want to implement both?
-
-                        We do want both unboxed and boxed generators to impl Iterator, but we do have to allocate the boxed ones first.
-
-                    Specify that await may use the generator frame of the caller instead of allocating a new one
-
-                    Can we impl Future for T: BoxedGenerator and impl Future for T: UnboxedGenerator?
-                        Wrap the generators in BoxedGeneratorWrapper and UnboxedGeneratorWrapper to avoid this?
-
-
-                    Can we have a reference counted generator?
-
-                    Can we turn a boxed generator into an unboxed one by allocating the frame?
-
-                    Return a type which implements:
-                    trait GeneratorConstructor<Args> {
-                        type Return;
-                        type Yield;
-                        type Gen: Generator<Args, Return=Self::Return, Yield=Self::Yield>;
-                        fn construct<A>(allocator: A) -> Self::Gen;
-                    }
-
-                    The type GeneratorConstructor::Gen must be anonymous since it captures the lifetimes of the arguments.
-
-                    Have an alloc() method returning an unboxed generator and store the allocate used inside the frame and pass it on using await
-                        Have alloc<A: Allocator> -> Struct<A>
-                        Need impl Trait in traits for this!
-                        Drop needs access to the allocatore, so we store it inside
-
-                    Make Allocator a type parameter of the trait so Future can default it to the global allocator
-
-                    Can we use a single type for boxed generators and store the frame pointer into it?
-                        Requires that allocators be part of standard Generators
-
-                    Pros:
-                        Can write recursive generators
-                        Allows persistent references to local variables, which is useful for generating unique IDs for RPC (and probably other things)
-                            We need to require that these IDs aren't reused too soon. How would we do that? 
-                        Can write the results of the future directly into to the generator frame, without a separate allocation
-                        We don't need a way to access the implicit argument, since suspend points don't invalidate anything.
+                    See GeneratorsAllcation.txt
 
                 Priming require us to duplicate poll() methods of future combinators?
                     Does this prevent optimizations? Possibly
@@ -1246,6 +1158,41 @@ Add conditional initial suspend like C++?
 
     https://gist.github.com/jamboree/a2b3fe32eeb8c21e820c
 
+How to deal with the memory used by a generator being revoked?
+
+How can you yield from multiple generators in a row without duplicating the implicit argument?
+    Require that the argument is copy?
+    Then we'd need a way to access non-copy arguments
+    Can we just let the argument copy if Copy and move otherwise?
+    Will we need a way to reassign the hidden variable without a suspend point?
+    If we want to call 2 yield froms in a row, we could clone the argument? Not possible!
+
+    We can allow you to specify the argument to pass to yield from?
+
+    Can we just use a for loop to simulate `yield form` and pass another argument to resume?
+
+    Can we create another generator which just yields from the other and pass an argument to it?
+        No, we'd need a for loop to do that.
+
+    Can we have some sugar where await! gets the current argument and processes it before yielding from the next?
+        Consider the case when the argument is Clone, but not Copy
+
+        Say we're tracking the stack depth using some integer: Clone.
+
+    Can we make yield from set the argument somehow?
+
+    Does C++ allow you to pass an argument to resume()?
+
+    We probably need a way to access the argument.
+        When should the argument drop?
+
+Does a representation where yield takes no arguments and resume() take no argument simplify things?
+    Can we pass in an argument by some other mechanism?
+        C++ has the concept of a promise, which allows you to alter internal state of the generator
+
+Look at how LLVM optimizes coroutines
+    If we inline LLVM style, we can apply optimizations for now known arguments
+
 yield as generator for syntax?
 or just yield from (also works)
 
@@ -1261,3 +1208,189 @@ Can we later add support for futures using callbacks in Rust if we get non-movab
 PROBLEM: We need to ban recursive generators. They result in recursive types. That is the generator frame contains itself.
     We also need to ban mutually recursive generators.
         We also can't allow this due to impl Trait?
+
+Can we use yield from / await! as way to count stack frames / build a stack frame and other cool things?
+    Use it to check stack overflow?
+    Implement try! / ?  ?
+
+When will the implicit argument be dropped?
+    Can multiple of them be alive at once?
+    So the lifetime of it cannot cross suspend points? Even in non-movable generators?
+        That would be bad.
+        Don't allow any way to borrow it? Just set/get?
+
+    Can it live across await!?
+
+    Only allow set and get of the implicit argument, no borrows
+        Can we sneak in intrinsics here?
+        take() to get the argument if it was not taken before?
+        Could make a wrapper which specialized the behavior so that Some(arg) is always return if the argument is Copy
+        set(value: Option<T>) would Drop the existing argument and use the provided one.
+        yield also drops the existing argument.
+
+        Provide stable take! and set! macros so users can use these
+        #[allow_internal_unstable]
+
+        Hm.. we'd need the type parameter of the intrinsics to match the argument type
+
+        Can we have an implicit argument for all functions/closures? Which is initially None?
+
+Alternative, non-movable types for generators
+    See GeneratorsNonMovable.txt
+
+Can we store the task "TLS" as a implicit argument?
+    Probably required for callbacks, polling can store it in actual TLS
+
+Optimization: If we pass constant values into a generator function. Can we duplicate the generate function and substitute in the constants. We replace the call with a call to the new function.
+    Is there anything to gain by letting functions contain multiple nested generators like how LLVM allows?
+
+Can we do some optimization where the body of a for loop is inserted as the yield statement of the generator?
+    This does follow the same pattern as await!, loop resume()/next() until it returns Complete/None and we do something for every Yield(v)/Some(v).
+
+    Say we have some loop that runs an freshly created generator to completion and handles every yield with some body of code. We can then inline the generator and replace yield statements inside with the body of code which handles it. This would apply to both await/`yield from` and for loops over iterators. This is kind of like 2-way inlining.
+
+        To identify the body of code to put into the callee, we'd take the basic blocks that can lead back into the loop from the matched Yield.
+
+        Since we'd have to duplicate the body of code inside the for loop, if it's expensive we'd like to avoid duplicating it.
+            If the body contains no yield statements, we'd move the body out to a function and replace yields inside with a call.
+                The inline could later inline it.
+            If the body contains yield statements, we'd move the body out to a generator and replace the yields inside with an await on the generator. This optimization can later inline that.
+
+    Too bad we can't change Iterator methods to use generators.
+
+Optimization:
+    We can inline resume(&mut self) where we only expand yield statments. We don't move variables into the generator frame.
+    When inlining we connect up the variables with the variables in the local variable.
+
+    So we first extract the required variables, before the resume() call, then store them back after.
+        This creates more loads and stores though, might be a bad idea
+        We can just require that the generator be a local variable, and expand it to it's variables.
+
+
+
+    <eddyb> you can have desugared state switching but not desugared state
+    <eddyb> if that makes sense
+    <eddyb> that is, you do the state machine transform but not assign live variables to states
+    <eddyb> then you inline
+    <Zoxc> I'm not sure what you mean by assigning live variables to states
+    <eddyb> Zoxc: a state contains a subset of the MIR locals
+    <eddyb> live at that suspend point
+    <Zoxc> How can you do the state machine transformation without doing that?
+    <eddyb> Zoxc: you just keep referring to them as local variables
+    <eddyb> i.e. you do the control-flow transform but no data-flow
+    <CensoredUsername> Could someone with access add the relevant labels tot his tracking issue? https://github.com/rust-lang/rust/issues/36167
+    <Zoxc> I don't see how that could work. Can you make an example of the control-flow-only transform and inlining on this code https://gist.github.com/Zoxc/d8dd9ce4cef23b5465bf7c0f5cce4c98 ?
+    <Zoxc> eddyb: Probably should have an example with variables, but I don't see how you'd inline either so =P
+    <eddyb> inline what?
+    <eddyb> this isn't generator-generator inlining
+    <Zoxc> eddyb: So if we have a generator created in this function which doesn't escape, we can replace it with it's variables and the state variable and use those directly when inlining resume()?
+
+Can we have some optimization that overlaps the store of the RPC result inside the future and the result given to back to await?
+    Would LLVM handle this well atm?
+
+    The result might be in registers, so this can't always help
+
+Would a callback model work well if we split up generators into a function for each suspend point?
+    That is a bit messy with multiple threads, you'd need atomics ops to update the state?
+
+    You can implement Join by just storing the result of the callbacks.
+
+    We need to get the implicit argument and store it in a variable which lasts to return expressions.
+
+    Select is a bit tricker. You'd want to pass through the first callback, but wait for a schedule on the second.
+    How do you do select with non-movable futures? Poll has the same problem
+        You can have a version of select which returns a borrow to the future that didn't complete yet.
+            How can we write this?
+        And you have have a version which boxes the futures and returns the future as a box.
+
+    How can you create an future for an API which uses callbacks using polling futures?
+        You can send a notification to the event loop that a future is ready. Which event loop? (The one which started the computation)
+
+        Not very efficient
+
+    How does cancellation compare with callbacks and polling?
+        Cancellation would require cancelling RPCs, which are callback based.
+        Since RPCs 
+
+    What's the lifetime of the callback functions?
+        fn schedule<'c, C: 'c>(callback: C<'c>) -> Future<'c> + ?Move
+
+        Callback functions must outlive the future
+
+        So use a pointer to the callback functor?
+            fn schedule<'c, C: 'c'>(callback: &'c mut C) -> Future<'c> + ?Move
+
+            How can we use this at the event loop level?
+                We can have a 'static callback which just frees the Box containing the future?
+
+        How can we write impl Future<'c>? We don't. That's only for the result of pin/schedule
+
+
+
+    Can we panic in Drop if we don't allow cancellation?
+        Does pancinking abort the destruction?
+
+    Look at async streams with callbacks and interactions with yield
+
+    Look at LLVM discussion for coroutines
+
+    Can we send the resume point to the scheduler to avoid storing it in the generator frame?
+        Is this slower? It avoids the need to separate save and suspend
+
+    Callbacks calls the task that is waiting on it directly, polling requires a trip to the schedulers
+
+    Callbacks wants tail call optimization when returning, so returning doesn't actually grow the stack
+        This can lead to stack overflow issues overwise.
+
+        Can we tail call even if we're supposed to free the future?
+
+    Callbacks doesn't need to store the result of futures inside the future. We get it delivered.
+
+    Polling require is to go deep inside tasks before finding the spot that is actually waiting on the event
+        Inlining helps here
+        Can we do something to improve this without inlining? Like a task instruction pointer? or a task suspend point?
+
+    Conditional await can lead to code duplication if we let each suspend point be a function
+        Do we need conditional await?
+
+        What happens with suspend points inside loops?
+
+    We can combine PinGenerator::pin() with schedule() to ensure we only schedule a callback once
+
+    PROBLEM: How to deal with the resume() argument. Can it be implicit and pass around &mut EventLoop?
+
+    Can we have a method on Future which runs before returning? And let impl Future for Generators with Return=!?
+        Can we have InnerReturn and OuterReturn types, where resume() use outer types and the function body inner?
+        How can the impl Trait provide the mapping here?
+
+        impl<InnerReturn, T: Generator<fn () -> InnerReturn, Return=()>> Future for T {
+            type Return = InnerReturn;
+        }
+
+        trait Generator<A: Abstraction<..?>> {
+
+        }
+
+        trait Abstraction<InnerReturn, InnerYield> {
+            type OuterReturn = !;
+            type OuterYield = !;
+            fn map_return(inner: InnerReturn) -> OuterReturn;
+        }
+
+    Does callback work well for futures inside a kernel, driven by interrupts?
+        Does Tock OS simulate a event loop using interrupts?
+        Tock OS is syncronious though?
+
+        Aren't interrupts fundematally sticky, which means they indicate readiness, not completeness?
+
+        A CPU would schedule the driver task to run. When the driver runs, it will find the cause of the interrupt and then issue a callback.
+            For the polling model, the driver would notify the scheduler that the future is ready to run. This corresponds to using a callback API with polling.
+
+            Can we just poll the future directly in the driver? (since the driver is also ran by the scheduler)
+                This is quite callback like
+                    This is how the event loop in userspace would look
+                Does futures-rs have something like this?
+                This does bypass the scheduler
+                Stack overflow dangers here
+
+    Think about what nested generators with callback would work. A return is a callback there.

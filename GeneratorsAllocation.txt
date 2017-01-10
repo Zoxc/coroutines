@@ -1,0 +1,112 @@
+Probably a good idea.
+So we'd have a pin() operation which allocates memory for the generator
+We could pass down the allocator to use as a hidden argument (like the executor)
+
+Does this require no modification to the borrow checker?
+
+This does add unsafe code for callers of generators. How will we deal with that?
+    We can pass in an allocator type which deals with the unsafety!
+
+It doesn't really have to be unsized, the real generator would just be inaccessible
+
+Check if LLVM coroutine support would allow use to allocate memory for it when the generator is run (as opposed to when it's constructed)
+    Hm.. we need to reference the functions after the split
+
+How can we deal with allocation failure?
+    Panicking is too restrictive (for microkernel servers), so we need a way to deal with it.
+
+    The error type of the Allocator trait may be !, to indicate that it panics?
+
+Can LLVM's coroutine support deal with our inlining-await.rs example?
+
+Let Futures deal with some executor context instead of allocators.
+    Should contain an event loop handle and an allocator to use
+
+What about the lifetime of the areana the allocator uses?
+    fn alloc<'a, A: Allocator<'a>>(allocator: A) -> Result<Wrapper<Self::Gen + 'a>, A::Error>;
+
+    ^^ we'd need it to have the lifetime of the event loop, but that is basically 'static so this isn't useful
+
+
+
+
+Can we have an AllocationRequest and AllocationResult types where constructing AllocationResult is unsafe?
+    This is more flexible than combining allocation and initialization
+    Doesn't handle destruction
+
+How can we capture lifetime parameters here? Would we just capture the parameters of all the arguments always?
+    I think that works.
+
+Use the box keyword to indicate allocation:
+    fn a() => box impl Future
+
+Now await must allocate and free memory, how will we make it generic over boxed generators and unboxed generators?
+    Can we make Allocator be a part of all generators?
+
+How will we use await on boxed generators inside generators which doesn't allocate?
+    We will need to provide one
+
+Can we write code that is generic over sync/async but doesn't allocate in the sync case?
+    We can use alloca() to allocate space, which would get optimized to a stack frame allocation.
+    But how do we do that only in a sync case?
+    Do we need to do that in the sync case only? Can we use this to avoid all allocations (besides the initial)?
+        We can only do this if we don't yield. Since a variable length allocation doesn't last to after returns.
+
+        So if await returns !, use variable length allocation for it.
+            Can we let the allocation size be a constant, to guaranatee that this turns into a normal stack allocation?
+
+Can we let boxed generators change the semantics of await?
+    Probably the best solution. So unboxed generators can only await on unboxed generators.
+    And boxed generators can wait wait on both?
+        This is still generic :/
+
+        We can just require it to wait on boxed generators, and require conversions for the rare case we want to wait on unboxed ones.
+
+    This does require futures to have boxed and unboxed variants?
+        Can futures just implement IntoUnboxedGenerator and IntoBoxedGenerator?
+        Will futures want to implement both?
+
+    We do want both unboxed and boxed generators to impl Iterator, but we do have to allocate the boxed ones first.
+
+Specify that await may use the generator frame of the caller instead of allocating a new one
+
+Can we impl Future for T: BoxedGenerator and impl Future for T: UnboxedGenerator?
+    Wrap the generators in BoxedGeneratorWrapper and UnboxedGeneratorWrapper to avoid this?
+
+
+Can we have a reference counted generator?
+
+Can we turn a boxed generator into an unboxed one by allocating the frame?
+
+Return a type which implements:
+trait GeneratorConstructor<Args> {
+    type Return;
+    type Yield;
+    type Gen: Generator<Args, Return=Self::Return, Yield=Self::Yield>;
+    fn construct<A>(allocator: A) -> Self::Gen;
+}
+
+The type GeneratorConstructor::Gen must be anonymous since it captures the lifetimes of the arguments.
+
+Have an alloc() method returning an unboxed generator and store the allocate used inside the frame and pass it on using await
+    Have alloc<A: Allocator> -> Struct<A>
+    Need impl Trait in traits for this!
+    Drop needs access to the allocatore, so we store it inside
+
+Make Allocator a type parameter of the trait so Future can default it to the global allocator
+
+Can we use a single type for boxed generators and store the frame pointer into it?
+    Requires that allocators be part of standard Generators
+
+Pros:
+    Can write recursive generators
+    Allows persistent references to local variables, which is useful for generating unique IDs for RPC (and probably other things)
+        We need to require that these IDs aren't reused too soon. How would we do that? 
+    Can write the results of the future directly into to the generator frame, without a separate allocation
+    We don't need a way to access the implicit argument, since suspend points don't invalidate anything.
+
+Can we use allocation for say RPCs instead to avoid lifetime issues?
+    We'd need to pass around allocator and deal with allocation errors everywhere. Not a good solution.
+    We can store the allocator inside 
+
+Can we mark alloc and free operation on the Allocator trait and let rust optimize away allocations?

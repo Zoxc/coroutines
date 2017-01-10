@@ -1,0 +1,7 @@
+Have cache data be revoked before cache metadata. So provide an order in which the pages are revoked
+Look at how C++'s callback futures would work with our RPC
+https://github.com/dwrensha/capnp-rpc-rust
+Would RPC run into trouble if it's dropped before it's completed?
+	Have the kernel revoke the Reply capability if a RPC is cancelled
+
+Can backpressure help in preventing apps in having too many concurrent RPCs?

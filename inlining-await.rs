@@ -91,4 +91,21 @@ pub fn gen_b_resume(g: &mut GenB) -> Res<usize> {
     }
 }
 
+extern {
+    fn block();
+}
 
+pub fn gen_a_test() {
+    let g = gen_a();
+
+    loop {
+        match gen_b_resume(&mut g) {
+            Res::Blocked => {
+                unsafe { block() }
+            }
+            Res::Val(v) => {
+                return v
+            }
+        }
+    }
+}
