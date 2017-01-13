@@ -1,9 +1,24 @@
+This would allow locking a mutex across a suspend point
+    This doesn't cause unsafety, but could lead to deadlocks
 
 We might have to wait for more expressive non-movable types as it would avoid the pinning part of the generators.
     This will always be less expressive though, since it will start out paused with arguments (which are always movable)
 
 Add minimal non-movable types? Could avoid messing with the borrow checker?
     Add a new OIBIT Move. ?Move indicates that a type might not move.
+
+Could we allow borrows to methods requiring Self: Move if there wasn't a borrow on the value yet? 
+
+Can we have the concept of eternal borrow instead of ?Move?
+    &'a static mut, &'a static? Such borrows guarantee that the address of the target doesn't change
+    Generating an ethernal borrow require the borrow to last to the end of the lifetime of the target
+    You can convert ethernal borrows to regular borrows, but not the other way around.
+
+    Any problems with panicking in Drop?
+
+    Does this prevent types with self borrows?
+
+Can we return FnOnce() -> Generator + ?Move instead?
 
 Let borrows of ?Move values introduce 2 borrows:
     One normal, as short as possible, with regular restrictions
@@ -30,6 +45,32 @@ Could we use a ?Move bound to indicate if the generator is non-movable?
             I think this should be Move so impl Iterator and impl Generator is nice
 
 Will ?Move require another Generator trait or can we still Have IntoGenreator::Into: Generator?
+
+Can we write future combinators with ?Move types so we don't need the 2-stage PinGenerator plan?
+    Probably, but we won't be able to collect futures into a Vec and select/join them
+
+    We can use an arena to collect the futures.
+        Could we also use Vec<Box<Future>>?
+
+        Can we have Vec: T: ?Move and Box: T: ?Move and let the borrow be transitive? This is required here
+
+            We could even have Vec<impl Future> then!
+
+            PhantomData<T> should not require ?Move if T: ?Move
+            How can we implement Move only if a type parameter does then?
+
+            We can allow ?Move for Vec if we ban everything returning references, including Index
+
+            Vec doesn't work. If we push another value on to it, it may relocate all the previous values. We may have observed those via Index
+                Hm.. delete would also break things. It would be stack based with push and pop where pop would be banned (since it moves)
+
+            We could have Vec like type which never relocates pushed entries
+
+            Would we need to do anything for this to work?
+                We need to have a T: Move bound on all function which actually move the values inside
+                Index*/Deref* may have resulted in a borrow of them
+
+    Check if the combinators require moves after poll()
 
 <Zoxc> eddyb: Viewing it as an extension to ?Move would be allowing ?Move annotations everywhere, but don't actually ban moves until we see a borrow of a type without Move
 <Zoxc> eddyb: Could that be implemented by just having the lifetime of such borrows last the entire function?

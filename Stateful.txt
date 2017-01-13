@@ -699,6 +699,13 @@ Bad things with https://github.com/rust-lang/rfcs/pull/1823
     Requiring closures in order to return generators
     yield can't be nice for async
 
+Does generators need to take &mut self?
+    The state point could be an Cell<index>
+
+    It does have visible side effects
+
+    Should this match Fn for function and Fn* for closures?
+
 Instead of passing arguments in, have a function which extracts them? May want syntax here
     Access the argument with a `self`-like keyword
     How to access the executor then?
