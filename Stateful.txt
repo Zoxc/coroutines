@@ -1401,3 +1401,5 @@ Would a callback model work well if we split up generators into a function for e
                 Stack overflow dangers here
 
     Think about what nested generators with callback would work. A return is a callback there.
+
+    Can we sleep inside a generator returning Iterator like in here? http://blog.paralleluniverse.co/2015/08/07/scoped-continuations/
