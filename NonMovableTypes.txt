@@ -1,0 +1,244 @@
+Immovable RFC
+    -- describe reborrow of fields
+    -- Immovable types in enums?
+    -- reborrows with enum matching?
+    -- should all Deref and DerefMut be allowed?
+    -- ban moves out of fields which are ?Move from mutable borrows
+
+    CHECK: Should trait objects implement Move by default?
+        Required if we want Iterator to be ?Move
+
+        Is [T], str and trait objects Move?
+
+        [T] should be move if T, to match arrays
+        str should implement Move, since it would be possible to move it in theory
+        Trait objects?
+
+    CHECK: ?Move bound in statics
+
+    CHECK: Move would be an OIBIT, so it would be infered for impl Trait?
+        Read the impl Trait RFC for details
+
+        It would be inferred.
+
+    CHECK: Can we borrow immovable types in statics with this RFC?
+        They would have 'static lifetime and be ok?
+
+    CHECK: Do we prevent assignments to &mut var? Those do actually drop the value, so that may be safe?
+        Only works if assignment drop in place, what does it do?
+            It seems to move it out then drop in place. This can't be allowed!
+
+            we need to ban assignemnts of &struct.field if struct and field is immovable
+
+        We need to allow?:
+            let s = immovable;
+            s.lock();
+            s.movable_field = 3;
+            s.immovable_field = 3; // ERROR if immovable_field has a destructor
+
+        Prevent assignment to immovables types if there is a restricton on the lvalue or if it's through a reference.
+            How can we know it is through a reference? There must be a deref operation for assignemnts through references!
+
+
+    Have a wrapper type which is movable but can contain immovables objects. The wrapped immovables type is private and you can only access it with get(), swap() and set(). This prevent pointer access by paths like &type.wrapper.inner. Name it `std::wrapper::Movable`? Similar idea to Cell, where you cannot get a pointer to the value
+        Call the wrapper MobileCell?
+    check if Deref can't be made ?Move :(
+    Deref::Target is ?Sized, so it can't actually be moved. Does this only result in problems with generic code?
+    Can we make ?Sized imply ?Move?
+
+    What type is the Args type of FnOnce? If it's just a tuple, it can't contain immovable types? Well it can, we just can't borrow them, which FnOnce won't do.
+        We need Args: ?Move too.
+
+    https://github.com/rust-lang/rust/tree/master/src/librustc_borrowck/borrowck
+
+    --- &struct.field is not allowed to move out if field is immovable.
+    what happens with &struct.field where struct is a value, not a reference?
+        should the eternal borrow be on the `struct` value?
+
+        what would rvalues?
+
+        Should &struct.a interfer with &struct.b?
+
+            What if struct is a &A or A or &mut A?
+    ^^- above cases in a match statement?
+
+    We need to allow:
+        let a = Box::new(immovable);
+        &*a;
+        &(*a).field;
+        let b = a;
+
+        Have the rule only apply to local variables, so reborrowing can be allowed?
+
+        &a.field freezes a, but &(*a).field does not (only if field is immovable?)
+
+        &immovable().field
+            Freezes the temp value?
+            Is this gone in MIR?
+
+
+    alt
+
+        - We could infer if type parameter should have a `?Move` bound based on its usage. This would avoid the backwards incompatible changes, but introduces dependencies on the usage. (Problems with traits methods?) (Would this have recursive semantics? Type depends on usage, usage depends on type?)  How does OIBIT interact with traits?
+
+    You can move out of a Box! https://github.com/rust-lang/rfcs/pull/178/files?short_path=6f69a99#diff-6f69a990502a98c2eeb172d87269005d http://manishearth.github.io/blog/2017/01/10/rust-tidbits-box-is-special/
+
+    Infering the bound based on bodies is not easy, since you need to support mutually recursive functions
+
+    Can we mock a crater run by adding ?Sized to FnOnce, IntoIterator and Deref?
+        Not for Deref!
+
+    Can we have a Static bound instead of ?Move? Would this avoid problems with associated types?
+        How would we prevent immovable types from being inside Box: !Static?
+
+    How can we borrow types in their constructor? Like setup for a mutex in Mutex::new which should return a immovable type?
+        Useful for type level state machines
+
+Add minimal non-movable types? Could avoid messing with the borrow checker?
+    Add a new OIBIT Move. ?Move indicates that a type might not move.
+
+Could we allow borrows to methods requiring Self: Move if there wasn't a borrow on the value yet? 
+
+Can we have the concept of eternal borrow instead of ?Move?
+    &'a static mut, &'a static? Such borrows guarantee that the address of the target doesn't change
+    Generating an ethernal borrow require the borrow to last to the end of the lifetime of the target
+    You can convert ethernal borrows to regular borrows, but not the other way around.
+
+    Any problems with panicking in Drop?
+
+    Does this prevent types with self borrows?
+
+Let borrows of ?Move values introduce 2 borrows:
+    One normal, as short as possible, with regular restrictions
+    One which must extend to the end of the lifetime of the value. The only restriction on it is that it may not be moved out of.
+
+Will ?Move require another Generator trait or can we still Have IntoGenreator::Into: Generator?
+
+<Zoxc> eddyb: Viewing it as an extension to ?Move would be allowing ?Move annotations everywhere, but don't actually ban moves until we see a borrow of a type without Move
+<Zoxc> eddyb: Could that be implemented by just having the lifetime of such borrows last the entire function?
+<eddyb> pretty much yes
+<Zoxc> So, fn id<T>(arg: T) { &arg; arg } -- legal,  fn id<T: ?Move>(arg: T) { &arg; arg } -- illegal
+    The lifetime of such borrow can have non-lexical lifetimes!
+        let a = non_movable();
+        if (true) {
+            &mut a // this lifetime extends outside it's scope
+        }
+        }
+        // implicit drop(&mut a)
+    Require borrows of non-movables types to be done in the same lexical scope as it's destructor
+
+    eddyb: For implementing non-movable types on the current borrow checker, could we just require that borrows of non-movable types are in the same lexical scope as the variable?
+
+    Hm.. so here returning is a move. So if we get a value by return, we know it's not yet borrowed
+
+
+    Hm.. we'd need to tag all types as `static T` to indicate that they are not movable
+
+    If we have a trait Future: ?Move, we can't indicate that the generator is move with just => impl Future
+        we need impl Future + ?Move
+        otherwise we break impl Iterator
+            hm.. ?Move can't be iterator anyway?
+                I think they can, but is that useful?
+
+                We can wrap non-movable types in references to get movable types, and those can impl iterator
+
+        Can we do something like that with a struct Static<T>(T): ?Move ?
+            Won't inherit the traits
+
+    Can we borrow pointers of non-movable types this way?
+
+    If a type implements ?Move, we cannot pass it to methods which takes T, like fn id<T>(arg: T)
+        Can we require ?Move on just the methods and functions which require it to be non-movable?
+
+
+Allow ?Move everywhere, but don't actually ban moves until we see a borrow of a type without Move
+    Implementation, make the lifetime of the borrow last until the end of the function?
+
+    Are there any problematic cases? ?Move would change the semantics of borrowing, not just allow more operations than before
+
+    Is this backwards compatible? Where do we need ?Move bounds?
+        Not FnOnce, function doesn't need to know about ?Move
+
+    If we have Type + Move we can call methods which have a Self: Move bound and borrow it without freezing
+
+    Would return types and arguments have a Move bound by default? What about locals?
+        What about methods?
+
+    Do we need to change IntoIterator to work with for loops?
+        We will need Iterator::Self to be ?Move.
+        Does this break fn foo<T: Iterator>(iter: T) or is T still ?Move here?
+
+        Trait can have Self: ?Move if they only pass self by reference?
+
+        Can all traits have ?Move by default for Self like ?Sized?
+            We'd break default implementations which borrow self?
+
+    for doesn't care if the type is movable or not? Does calling Iterator methods on it allow it to see that the type is ?Move?
+        Does iterator requiring ?Move prevent this?
+            Possibly
+
+            Will this prevent all implementations? or will this just disallow calls to things which knows about ?Move?
+
+            So generators with ?Move can't implement Iterator
+
+        How can we work with for loops then?
+
+        We can make Iterator::Self: ?Move, but not IntoIterator::IntoIter: ?Move
+            So we need a new IntoIterator trait.
+
+Non-movable types may appear in:
+    return <expr>
+    &<expr>
+    &mut <expr>
+    <place> <- <expr>
+    ConstructorSyntax { field: <expr> }
+
+    return types of functions
+    type parametes with ?Move
+
+Can the placement syntax work with Move?
+    We can't place it into Vec since that might move it
+
+How does non-movable traits interact with trait objects and Self in traits?
+
+Would type parameters and Self in traits implement Move? 
+
+Interactions with Copy:
+    If a trait implements Copy, but not ?Move, it will just copy. That will just prevent moves in generic code.
+
+Non-movable types can be returned from functions.
+    How? return passes by ownership
+        It can be allowed if we construct it inside the return statement.
+            return NonMovable { .. }
+            return create_non_movable()
+
+    We can access the returned value with let v = &mut func();
+
+Add core::marker::Immobile
+
+Add support for Deref and DerefMut
+
+How would we construct an object which has references to itself?
+    We can't access it if we return
+    So we need some way to construct it in the return slot?
+        let ret: &mut r = return <- val?
+
+    We could allow moves until a borrow to help here? No, that doesn't help. 
+
+PROBLEM: We'd need to make Fn Return: ?Move,  also fn() -> R: ?Move
+    Zoxc: Would letting FnOnce::Output have a ?Move bound be backwards compatible?
+    eddyb: Zoxc: no
+        7:46 pm
+        well, it won't be a problem for stable code
+        7:46 pm
+        which can only use the traits though e.g. Fn() -> T which requires the T to come from somewhere else and that is T: Move (Relocate is what I prefer but w/e)
+    Zoxc: eddyb: That was my logic too. You'd only have problems if you start using types which are ?Move
+
+When would Deref::Target: ?Move break?
+    If we pass on the reference to another function taking &T, but T is Move
+        Such a function can't actually move it though.
+        Can we work around this by inferring ?Move bounds (based on the function signature only)
+            We cannot allow cases where that would result in moving post-borrow in the body.
+            Can we prevent that somehow?
+
+Can we make initial suspend an option for non-movable generators?

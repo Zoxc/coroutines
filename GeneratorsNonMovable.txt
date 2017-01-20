@@ -1,28 +1,14 @@
+Can we let Generator return a immovable type wrapped in a movable?
+    This is simiar to our 2-stage logic.
+
+
 This would allow locking a mutex across a suspend point
     This doesn't cause unsafety, but could lead to deadlocks
 
 We might have to wait for more expressive non-movable types as it would avoid the pinning part of the generators.
     This will always be less expressive though, since it will start out paused with arguments (which are always movable)
 
-Add minimal non-movable types? Could avoid messing with the borrow checker?
-    Add a new OIBIT Move. ?Move indicates that a type might not move.
-
-Could we allow borrows to methods requiring Self: Move if there wasn't a borrow on the value yet? 
-
-Can we have the concept of eternal borrow instead of ?Move?
-    &'a static mut, &'a static? Such borrows guarantee that the address of the target doesn't change
-    Generating an ethernal borrow require the borrow to last to the end of the lifetime of the target
-    You can convert ethernal borrows to regular borrows, but not the other way around.
-
-    Any problems with panicking in Drop?
-
-    Does this prevent types with self borrows?
-
 Can we return FnOnce() -> Generator + ?Move instead?
-
-Let borrows of ?Move values introduce 2 borrows:
-    One normal, as short as possible, with regular restrictions
-    One which must extend to the end of the lifetime of the value. The only restriction on it is that it may not be moved out of.
 
 Could we use a ?Move bound to indicate if the generator is non-movable?
     Could impl Future elide that if Future: ?Move?
@@ -45,6 +31,8 @@ Could we use a ?Move bound to indicate if the generator is non-movable?
             I think this should be Move so impl Iterator and impl Generator is nice
 
 Will ?Move require another Generator trait or can we still Have IntoGenreator::Into: Generator?
+
+PROBLEM: References as hidden arguments cannot cross suspend points!
 
 Can we write future combinators with ?Move types so we don't need the 2-stage PinGenerator plan?
     Probably, but we won't be able to collect futures into a Vec and select/join them
@@ -72,100 +60,9 @@ Can we write future combinators with ?Move types so we don't need the 2-stage Pi
 
     Check if the combinators require moves after poll()
 
-<Zoxc> eddyb: Viewing it as an extension to ?Move would be allowing ?Move annotations everywhere, but don't actually ban moves until we see a borrow of a type without Move
-<Zoxc> eddyb: Could that be implemented by just having the lifetime of such borrows last the entire function?
-<eddyb> pretty much yes
-<Zoxc> So, fn id<T>(arg: T) { &arg; arg } -- legal,  fn id<T: ?Move>(arg: T) { &arg; arg } -- illegal
-    The lifetime of such borrow can have non-lexical lifetimes!
-        let a = non_movable();
-        if (true) {
-            &mut a // this lifetime extends outside it's scope
-        }
-        }
-        // implicit drop(&mut a)
-    Require borrows of non-movables types to be done in the same lexical scope as it's destructor
-
-    eddyb: For implementing non-movable types on the current borrow checker, could we just require that borrows of non-movable types are in the same lexical scope as the variable?
-
-    Hm.. so here returning is a move. So if we get a value by return, we know it's not yet borrowed
-
-
-    Hm.. we'd need to tag all types as `static T` to indicate that they are not movable
-
-    If we have a trait Future: ?Move, we can't indicate that the generator is move with just => impl Future
-        we need impl Future + ?Move
-        otherwise we break impl Iterator
-            hm.. ?Move can't be iterator anyway?
-                I think they can, but is that useful?
-
-                We can wrap non-movable types in references to get movable types, and those can impl iterator
-
-        Can we do something like that with a struct Static<T>(T): ?Move ?
-            Won't inherit the traits
-
-    Can we borrow pointers of non-movable types this way?
-
-    If a type implements ?Move, we cannot pass it to methods which takes T, like fn id<T>(arg: T)
-        Can we require ?Move on just the methods and functions which require it to be non-movable?
-
-
-Allow ?Move everywhere, but don't actually ban moves until we see a borrow of a type without Move
-    Implementation, make the lifetime of the borrow last until the end of the function?
-
-    Are there any problematic cases? ?Move would change the semantics of borrowing, not just allow more operations than before
-
-    Is this backwards compatible? Where do we need ?Move bounds?
-        Not FnOnce, function doesn't need to know about ?Move
-
-    If we have Type + Move we can call methods which have a Self: Move bound and borrow it without freezing
-
-    Would return types and arguments have a Move bound by default? What about locals?
-        What about methods?
-
-    Do we need to change IntoIterator to work with for loops?
-        We will need Iterator::Self to be ?Move.
-        Does this break fn foo<T: Iterator>(iter: T) or is T still ?Move here?
-
-        Trait can have Self: ?Move if they only pass self by reference?
-
-        Can all traits have ?Move by default for Self like ?Sized?
-            We'd break default implementations which borrow self?
-
-    for doesn't care if the type is movable or not? Does calling Iterator methods on it allow it to see that the type is ?Move?
-        Does iterator requiring ?Move prevent this?
-            Possibly
-
-            Will this prevent all implementations? or will this just disallow calls to things which knows about ?Move?
-
-            So generators with ?Move can't implement Iterator
-
-        How can we work with for loops then?
-
-        We can make Iterator::Self: ?Move, but not IntoIterator::IntoIter: ?Move
-            So we need a new IntoIterator trait.
-
-Non-movable types may appear in:
-    return <expr>
-    &<expr>
-    &mut <expr>
-    <place> <- <expr>
-    ConstructorSyntax { field: <expr> }
-
-    return types of functions
-    type parametes with ?Move
-
-Can the placement syntax work with Move?
-    We can't place it into Vec since that might move it
-
-How does non-movable traits interact with trait objects and Self in traits?
-
-Would type parameters and Self in traits implement Move? 
-
-Interactions with Copy:
-    If a trait implements Copy, but not ?Move, it will just copy. That will just prevent moves in generic code.
-
 Regular generators cannot contain non-movable types which lives across suspend points.
     Probably easy enough to ban them altogether.
+        We don't need to. The borrow checker will catch any references to them across the suspend points.
 
 Non-movable types can be returned from functions.
     How? return passes by ownership
@@ -195,17 +92,6 @@ Should we make normal generators implement PinGenerator?
 
 Use fn foo() => static impl Future for non-movable generators
 
-Add core::marker::Immobile
-
-Add support for Deref and DerefMut
-
-How would we construct an object which has references to itself?
-    We can't access it if we return
-    So we need some way to construct it in the return slot?
-        let ret: &mut r = return <- val?
-
-    We could allow moves until a borrow to help here? No, that doesn't help. 
-
 Plan
     Use only yield and a way to access the argument
 
@@ -216,8 +102,5 @@ Plan
 
     Look at placement syntax first
         We can just require a ?Move bound on the Data type parameters
-
-PROBLEM: We'd need to make Fn Return: ?Move,  also fn() -> R: ?Move
-
 
 Can we make initial suspend an option for non-movable generators?
