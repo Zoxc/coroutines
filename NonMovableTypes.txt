@@ -242,3 +242,41 @@ When would Deref::Target: ?Move break?
             Can we prevent that somehow?
 
 Can we make initial suspend an option for non-movable generators?
+
+
+Can https://internals.rust-lang.org/t/lang-team-minutes-implied-bounds/4905 help with ?Move/?Sized bounds?
+    Can they result in code that breaks due to new ?Move/?Sized bounds? Possibly
+
+We can put PhantomData in the MobileCell wrapper if we want to avoid getting immovable types
+
+Con: This doesn't make us able to have constructor function for types which require borrowing in the constructor
+    Have pure immovable types (types that never can move) doesn't allow this either, since you'd need to construct it in a local variable to borrow it. It would need an optimization to avoid storing it to the local stack frame
+
+Hm.. can we have a call which immediately borrows the returned value?
+
+eddyb: Hm.. so constructor functions would take &mut Uninit<T> and return &mut T?
+
+Can we find move restrictions by using dataflow on &mut and &? You cannot move a value if it is dominated by a borrow?
+    Hm..
+
+    let a = foo();
+
+    loop {
+        let b = a; // move
+        &a
+    }
+
+    <eddyb> keep in mind &a.x should not affect a.y, at least IMO
+
+    So if x is movable:
+        &a.x does nothing
+    if x is immovable:
+        &a.x observes a.x and a
+
+    Reborrows? Irrelevant?
+    Borrows of fields marks the root as borrowed
+    Fields?
+
+https://github.com/rust-lang/rust/compare/master...pnkfelix:mir-borrowck3
+
+Hm.. we will probaby need to ban !Move for Copy? or ?

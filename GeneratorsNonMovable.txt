@@ -91,7 +91,10 @@ Should we make normal generators implement PinGenerator?
 
 
 Use fn foo() => static impl Future for non-movable generators
+    Or use the `move` keyword for movable generators?
 
+    static could work well with closures?
+       let fut = static |req| await!(something);
 Plan
     Use only yield and a way to access the argument
 
@@ -104,3 +107,368 @@ Plan
         We can just require a ?Move bound on the Data type parameters
 
 Can we make initial suspend an option for non-movable generators?
+
+
+Have we have Args: 'static to avoid issues with lifetimes until a proper solution is found?
+
+Can we let await! expand to some sugar just calling resume() and requiring resume() to exist on the expr?
+    The resume() method needs to return a generator related type, so this won't result in accidental behavior
+    Doesn't work if multiple resume() method are in scope
+
+How to deal with lifetimes of the arguments
+    Arguments to resume() still can't live across suspend points.
+    Can we store them to local variables (which now can live across)?
+        This seem to interact with NLL on MIR
+        If this is allowed, we cannot use such variables later on
+
+        Can we store them to temporaries?
+            let a = &arg; // reference to temp
+                Doesn't work if we alloc coroutines to return references to locals
+                Can we allow this if we move the argument into the storage space (so it wouldn't move and be updated)?
+                This is references to references, not the actual problem
+
+            let a = &*arg; // reborrow of arg is problematic
+
+Closures as generators would return an impl Generator, making them FnOnce(args) -> impl Generator
+    Can we have FnMut(args) -> impl Generator and Fn(args) -> impl Generator giving the ability to "restart" the generator?
+
+    let A = Vec::();
+
+    let b = || { // captures reference to A
+        yield 3;
+        &mut A
+    }
+
+    let c = b(); // returns reference to A
+
+    b(); // cannot call b() again since C holds a reference to A
+
+    Captures by values rules out FnMut and Fn
+        No, moves out from the environment rules them out
+    Captures by mut ref rules out Fn
+        Mutating the environment (creating &mut pointers to it) rules out Fn
+            What about capturing &mut T? 
+
+    ^ Consider move vs not move, remember the desugar
+        Non move closures are just move closures which captures references to the world outside
+
+
+http://smallcultfollowing.com/babysteps/blog/2017/02/21/non-lexical-lifetimes-using-liveness-and-location/
+
+To check if generators implements OIBITs, we need to transform them and see what types are captured?
+    Doing a liveness analysis during typeck should do
+        That doesn't deal with data variables may point to.
+
+    <Zoxc> Adding a TyGenerator variant to  TypeVariants with the same fields as TyClosure sounds like the right thing for generators, right?
+    <eddyb> Zoxc: maybe? maybe this is where using the same closure types and traits for generators would make things easier :P?
+    <eddyb> at this point I'm kind of distraught on the whole thing
+    <eddyb> only notable datapoint is that closures and generators, unlike other things, are very restricted in direct access to their state, therefore allowing us to optimize that state based on how it's used
+    <-- Aaronepower (Aaronepower@moz-jqc.96c.97.79.IP) has quit (Quit: My MacBook has gone to sleep. ZZZzzz…)
+    --> jackpot51 (jeremy@moz-mrg.s9q.75.38.IP) has joined #rustc
+    <Zoxc> eddyb: We we'll want additions "type parameters" for generators. The types of the variables used across blocks should also be stored there (to give the correct size and OIBIT impls)
+    <Zoxc> We could do liveness analysis on values before typeck to collect them
+
+Thread
+    @mark-i-m There isn't a need for different signatures for movable and immovable generators. A single trait suffices. However having generators returning a new generator when resumed is incompatible with immovable generators.
+
+    @vadimcn The generator-generator would only need to contain the upvars (like regular closures) and wouldn't have a storage for values crossing suspend points. So it will remain movable until we construct the proper immovable generator which does have this storage.
+
+    An issue I ran into when playing with an implementation of generators is figuring out when an generator implements OIBITs. For example, our generator can't implement Send if some Rc crosses the suspend point. Whether or not an OIBIT is implemented depends on the types of values that lives across suspend points. Figuring out these values is a hard since they in turn can contain references to more values. In the presence of unsafe code, we may have to assume all values that have their address taken may live across suspend points. Movable generators resolve this issue by banning such references.
+
+    An related issue is the layout of generators. The same set of values decides the size of the generator. We really want to run MIR optimizations on generators before committing to a layout. If we allow size_of to be used at compile-time, we'd need the ability to compute layout during type checking, but the layout of generators might depend on type checking!
+
+Issues
+    Interface to implicit arguments
+    Arguments with lifetimes, how to borrowck these?
+    Size/layout of generator in presence of size_of at compile-time
+    OIBIT impls of generators (especially Send), needs to know which types are stored in the generator
+
+    If we base the stored state on a liveness analysis in typeck, how can we make sure that a MIR transform uses only these variables? and no new state is being generated
+
+    Can we resolve the last 2 by requiring marking of borrows of local with the 'static' keyword?
+        Would this be similar problem to having references as argument and preventing them from crossing suspend points?
+
+        How would this work with captures by ref in closures?
+
+    In order to check if a generator with generic types is a OIBIT we'd need to use a MIR transform with generic types...
+        Not a problem, MIR is generic!
+
+    Is size_of at compile-time a real problem? Could it ever return a value of a type that isn't fully specified?
+        Like size_of T in generics?
+
+        Is this related to running const functions with generic types in them? Perhaps
+
+    So if size_of was made a const function, could we run it on closures types while the bodies of closures still has types with type parameters or inference variables?
+
+    How to detect if an address of value should live across states?
+        If the lifetime of the generated borrow crosses a suspend point, and it is a real address of (not a reborrow)
+
+        Can we do this using "lifetime erased" types in MIR?
+
+    A generator is !Move if some reference to a local value crosses a suspend point. This is true even if the borrowed value is !Move
+
+    Cheat by having only having function generators
+        How to infer the type of the argument? (based on the return type)
+
+        What to do about returning `impl Move`? or impl Future+Move?
+
+    Generators should be able to return references with lifetimes shared by the implicit argument, like closures, Fn(&T) -> &T
+
+    Returning impl for<'e> Generator<&'e T> should make 'e a new lifetime parameter in the body of the function, and the type of the implicit argument would be: &'e T, it would act as a parameter with that type
+
+    Trick, declare up front which OIBITs a generator implements!
+
+    Hm.. can we have for<'a> T: Trait, where T captures 'a?
+
+    Check that dropping the implicit argument before yield has the correct unwind path
+
+    Check that `yield, &local` is allowed in arguments
+
+    Check that impl Trait when returning a future can access the underlying generator with its witness when cross crate
+
+    How does drop(self) work in generators? Is that legal?
+
+
+
+    Run borrowck twice on !Move generators. Use the result of the first pass to transform MIR, then run it again to catch references that shouldn't cross.
+        We would have to transform the references into unsafe code here
+
+        To transform immovable generators, we first run borrowck. We use the result of borrowck to identify references to local values crossing suspend points. We move those values from the stack from into the geneator's state and change the references to raw pointers. We then do the rest of the state transformation and run again borrowck after to catch error with references which cannot cross suspend points
+
+        Can we run into issues with interactions with references which can cross suspendpoint and those which can't?
+
+
+
+
+Having generators be closures would prevent us from using the closure twice.
+
+What would the type of closures having a &mut EventLoop argument be?
+
+    FnOnce() -> for<'a> impl Generator<&'a mut EventLoop> ?
+
+Note: Let GeneratorLayout be a on demand function of MIR. Ideally this is only called in trans, but if it is called before, we can apply it to the current state of MIR.
+    This may have issues with further passes introducing or changing local variables.
+    We can probably just do the whole transform on demand and hope it's only demanded after optimizations
+    This doesn't work if it's demanded from operationos which borrows the generator's Mir
+
+Have no FnMut closures? Require FnOnce or Fn for generators? can Fn closures captures variables by move?
+    It looks like anything that isn't Copy requires FnOnce to be passed by value
+
+Implicit argument
+    Lifetime &impl arg is not lexical, so this requires NLL?
+        Workaround, move to local variable
+
+    It has a strange lifetime. Can NLL capture it?
+
+    Its lifetime cannot cross suspend points, because it will be dropped at a suspend point. So it will correspond to other lifetime which cannot cross. Requires MIR borrowck to enforce it.
+        Can the same thing happen with lifetimes in the implicit argument type?
+
+    How does it interact with drop flags? Should it always have a drop flag? (If not Copy)
+        Always dropped at yield or return, unless moved
+
+Backup OIBIT plan: Use the types of all locals/temps in the generator and a whitelist which gets checked post-MIR construction
+
+TODO: Look at the case with bodies returning impl Trait while also being generators
+TODO: Generate drops for generators
+TODO: Drop the argument when the generator is resumed after completion
+TODO: Ban &impl arg and &mut impl arg
+TODO: How does moving out of closure environment interact with dropping?
+TODO: How should generators work with catch?
+TODO: Make sure that having Fn with non-Copy environment like Vec values work! These may not be FnOnce.
+    Any upvar captured by value must either be Copy or force FnOnce for the closure. We can conservatively
+TODO: Check if generators impact DropCk in any way
+TODO: Give good error messages if the type of the implicit argument is unconstrained
+TODO: What happens with generators if they panic inside? Should they be poisoned?
+    Can we add a new state and write it on before all resume terminators to do this?
+TODO: Can we instrument LLVM IR with miri like operations and run that? Basically an just another sanitizer. We could keep this optimized IR around in metadata to avoid the computation overhead of miri? Maybe even keep a binary form around. Needs monomorphization though. This is not a portable approach. We would need to generate LLVM IR which acts like it's on another platform. Should be possibly though
+    We could maybe execute these in a generic fashion, by boxing all types? May have a bit of an performance impact
+TODO: On demand driven trans of dependencies
+TODO: Model function arguments like closure upvars to ensure lifetimes gets captured
+    What happens with closure arguments? These need to be modelled as upvars too!
+
+    Hm.. does the same problem appear for any lifetime inside the function?
+
+Can we make the generator record its location and panic if ran after being moved?
+    Is this sound if generators can't return references to data inside?
+    Doesn't work with multithreading, other threads could access the data
+        Making the generator not-Send isn't sufficient to prevent this
+
+Have for loops use an attribute like #[async]? Moves the problem to libraries which solves the trait coherence issues
+
+TODO: Use scopes in middle::region to compute which types are live across yields. Find out if scopes contains yields, and consider all variables and temporaries with these scopes as live
+
+TODO: How is `ref a: &u32` captured for generators?
+
+TODO: How will `gen arg` work if it captures lifetimes?
+    It doesn't have a traditional lexical scope
+    Will giving it an argument scope work for regionck purposes
+
+Check if LocalDecls are only used within a basic block. If so, don't store them in the generator frame.
+    Needs to check if those local decls are borrowed. Hm......
+
+Can we just check all lifetimes in a function and see if they intersect with the scopes? Kind of like how inferring types inside generator bodies work?
+
+Postfix operator for await!?
+    let a = foo(2)@?;  let a = await!(foo(2))?;
+Prefix ~?
+    let a = ~foo(2);  let a = ~foo(2)?;
+
+    for ~a in stream?
+
+Check interactions with ?Move values inside Move generators.
+    Would OIBIT checking of Move suffice here? It seems so.
+    Is this required?
+
+TODO: How to find out which references should be hidden from impl Trait?
+    References to locals cannot be named
+
+    Should we simply erase ReScope which belongs to the generators and are inside the generator interior?
+        OIBITs can still work with erased types?
+
+        How does this work with scopes of nested closures / generatores?
+
+        Can there be type variables inside the interior which later unify with ReScope from the generator?
+            For each type variable inside the interior, create a new one and use that instead in the interior. Note down which generator we were processing and the new and old type variable. Later, if the old type variable has unified with anything, continue processing it and unify the new type variable with the result.
+
+TODO: Should generator interior types have a Binder?
+    When looking for OIBIT, we probably need a Binder in case the interior has lifetime parameters
+
+Ignore component types for immovable generator in regionck so region inference is unaffected
+    How to ensure that say, ReFree doesn't leak out here?
+
+    Let function arguments count as upvars here and upvars/function arguments should not be ignored
+
+TODO: Require that builtin generator have 'static arguments. Leave it out on Generator?
+
+TODO: Since ReFree can get converted into ReScope, ensure that this doesn't cause borrowck errors
+
+TODO: Check if GeneratorDrop affects drop elaboration
+
+According to this http://smallcultfollowing.com/babysteps/blog/2017/02/21/non-lexical-lifetimes-using-liveness-and-location/
+    we can let a variable be part of the generator frame if it is live, or it is borrowed (by the rules in the link above)
+
+    Hm.. we probably need to collect the lifetime of all &'a val borrows and consider the points where the lifetime is live as uses of `val`
+
+Even if NLL allows |arg: A| yield for generators, we would require that A be part of the internal types of the generator which means it affects OIBITs
+
+TODO: How is the interior stored in the metadata?
+TOOD: Check if generators are generated as FnOnce or FnMut in MIR building. &mut Sig, FIX THIS
+
+Encode generators with a 3rd closure kind?
+
+Use await!(a, b, c) to await for multiple futures
+
+Can we make all arguments to generator work like the implicit argument in that they are not live during suspend points and borrows to them are not allowed to cross suspend points?
+    So this allows us to use the closure syntax to specify the implicit argument(s) and allows you to refer to all of them.
+
+Callback based futures do not need to find the correct path to take in select. The event loop will drop it right into the select coroutine.
+This means that callback based futures need to store the return function pointer.
+
+Generator PR issues:
+    select.rs:2128 @ariel1b Shouldn't you be using the list of generator interior types? I mean, nobody should be having non-trivial OIBIT impls for tuples, but there's no reason to use them.
+        @ariel1b You can leave the obligation ambiguous if the witness isn't resolved yet (by setting ambiguous = true from assemble_candidates_from_default_impls).
+    We don't want to expose the generator interior as tuples
+
+    Document layout of generator
+
+    relate.rs:387 @ariel1b Shouldn't things be related in an invariant manner, like in fn items? I don't think this should matter (this is also the case for closures) because all generators that "exist simultaneously" should have the same substs, but if you're touching the area..
+
+    +error[E0501]: cannot borrow `x` as immutable because previous closure requires unique access
+    @ariel1b You are calling a generator a "closure" here
+
+
+
+    In src/librustc_borrowck/borrowck/mod.rs:
+    > +                //         println!("{}", a); //                        |
+    +                //     };                     //                        |
+    +                // } <----------------------... live until here --------+
+    +                // ```
+    +                //
+    +                // To detect this case, we look for cases where the
+    +                // `super_scope` (lifetime of the value) is within the
+    +                // body, but the `sub_scope` is not.
+    +                debug!("err_out_of_scope: self.body.is_generator = {:?}",
+    +                       self.body.is_generator);
+    +                let maybe_borrow_across_yield = if self.body.is_generator {
+    +                    let body_extent = region::CodeExtent::Misc(self.body.id().node_id);
+    +                    debug!("err_out_of_scope: body_extent = {:?}", body_extent);
+    +                    debug!("err_out_of_scope: super_scope = {:?}", super_scope);
+    +                    debug!("err_out_of_scope: sub_scope = {:?}", sub_scope);
+    +                    match (super_scope, sub_scope) {
+    Won't this also kick in "wrongly" when a value is tried to be made to "escape" from a generator?
+
+    fn example1() {
+        let mut tmp = None;
+        || {
+            let a = 0;
+            tmp = Some(&a);
+            yield ();
+        };
+    }
+    Through in that case the value is still being destroyed by the generator, so the error is not entirely wrong. Actually, the error is "correct" even if super_scope is a free scope (e.g. 'a), in a case like
+
+    fn assert_static<T: 'static>(_t: T) {}
+
+    fn example2() {
+        let mut tmp = None;
+        || {
+            let a = 0;
+            assert_static(&a);
+            yield ();
+        };
+    }
+    With the current implementation, all loans are killed by yields, so I don't think that checking body_scope even matters (or does it?). I'll at least like UI tests for these 2 cases.
+
+
+
+    In src/librustc_borrowck/borrowck/mod.rs:
+    > +                //         println!("{}", a); //                        |
+    +                //     };                     //                        |
+    +                // } <----------------------... live until here --------+
+    +                // ```
+    +                //
+    +                // To detect this case, we look for cases where the
+    +                // `super_scope` (lifetime of the value) is within the
+    +                // body, but the `sub_scope` is not.
+    +                debug!("err_out_of_scope: self.body.is_generator = {:?}",
+    +                       self.body.is_generator);
+    +                let maybe_borrow_across_yield = if self.body.is_generator {
+    +                    let body_extent = region::CodeExtent::Misc(self.body.id().node_id);
+    +                    debug!("err_out_of_scope: body_extent = {:?}", body_extent);
+    +                    debug!("err_out_of_scope: super_scope = {:?}", super_scope);
+    +                    debug!("err_out_of_scope: sub_scope = {:?}", sub_scope);
+    +                    match (super_scope, sub_scope) {
+    BTW, E0597 makes a distinction between temporaries and "borrowed values". You might want to make it too.
+
+
+
+    In src/librustc_typeck/check/closure.rs:
+
+    > @@ -32,6 +32,8 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
+             debug!("check_expr_closure(expr={:?},expected={:?})",
+                    expr,
+                    expected);
+    +        // FIXME: Should we adapt deduce_expectations_from_expected_type to work with
+    +        // generator traits? It looks like it's conservative to add support for this later.
+    If your generators don't take any arguments it is not needed.
+
+
+
+    In src/test/run-pass/generator/panic-drops.rs:
+    > +        if true {
+    +            panic!();
+    +        }
+    +        drop(b);
+    +        yield;
+    +    };
+    +
+    +    assert_eq!(A.load(Ordering::SeqCst), 0);
+    +    let res = panic::catch_unwind(panic::AssertUnwindSafe(|| {
+    +        foo.resume()
+    +    }));
+    +    assert!(res.is_err());
+    +    assert_eq!(A.load(Ordering::SeqCst), 1);
+    +
+    +    let mut foo = || {
+    +        if true {
+    Are you sure the if true isn't being eaten by SimplifyBranches? I'll personally do an if test::black_box(true) - even if it doesn't eat them now, it might in the future.
